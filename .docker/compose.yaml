@@ -1,0 +1,12 @@
+services:
+  zenoh_ros2_nostd:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: "ghcr.io/baker-link-lab/bakerlink-env:latest"
+    container_name: "zenoh_ros2_nostd-container"
+    volumes:
+      - "../:/zenoh_ros2_nostd"
+    working_dir: /zenoh_ros2_nostd
+    command: /bin/sh
+    tty: true

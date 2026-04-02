@@ -1,0 +1,26 @@
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+runner = "probe-rs run --chip RP2040 --protocol swd"
+
+rustflags = [
+  "-C",
+  "linker=flip-link",
+  "-C",
+  "link-arg=--nmagic",
+  "-C",
+  "link-arg=-Tlink.x",
+  "-C",
+  "link-arg=-Tdefmt.x",
+  "-C",
+  "llvm-args=--inline-threshold=5",
+  "-C",
+  "no-vectorize-loops",
+]
+
+# Default target removed — library is MCU-agnostic.
+# To check no_std compatibility:
+#   cargo check --target thumbv6m-none-eabi
+# To run host tests:
+#   cargo test
+
+[env]
+DEFMT_LOG = "debug"

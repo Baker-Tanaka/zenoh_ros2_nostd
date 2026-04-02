@@ -1,0 +1,19 @@
+{
+    "name": "zenoh_ros2_nostd",
+    "dockerComposeFile": "../.docker/compose.yaml",
+    "service": "zenoh_ros2_nostd",
+    "workspaceFolder": "/zenoh_ros2_nostd",
+    "remoteEnv": {
+        "LOCAL_WORKSPACE_FOLDER": "${localWorkspaceFolder}"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "rust-lang.rust-analyzer",
+                "probe-rs.probe-rs-debugger",
+                "tamasfe.even-better-toml",
+                "fill-labs.dependi"
+            ]
+        }
+    }
+}
