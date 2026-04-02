@@ -1,4 +1,8 @@
 [toolchain]
 channel = "1.94.1"
-targets = ["thumbv6m-none-eabi"]
+targets = [
+  "thumbv6m-none-eabi",
+  "riscv32imc-unknown-none-elf",
+  "wasm32-unknown-unknown",
+]
 components = ["rustfmt", "llvm-tools"]

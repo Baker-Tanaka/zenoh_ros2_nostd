@@ -16,6 +16,23 @@ rustflags = [
   "no-vectorize-loops",
 ]
 
+# XIAO ESP32C3 (riscv32imc-unknown-none-elf)
+# Requires: `cargo install probe-rs-tools`
+# Flash & run: cargo test --test test_esp32c3 --target riscv32imc-unknown-none-elf
+[target.riscv32imc-unknown-none-elf]
+runner = "probe-rs run --chip esp32c3 --protocol jtag"
+
+rustflags = [
+  "-C", "link-arg=-Tlink.x",
+  "-C", "link-arg=-Tdefmt.x",
+]
+
+# WebAssembly (wasm32-unknown-unknown)
+# Requires: `cargo install wasm-bindgen-cli`  and  Node.js
+# Run: cargo test --test test_wasm --target wasm32-unknown-unknown --no-default-features
+[target.wasm32-unknown-unknown]
+runner = "wasm-bindgen-test-runner"
+
 # Default target removed — library is MCU-agnostic.
 # To check no_std compatibility:
 #   cargo check --target thumbv6m-none-eabi

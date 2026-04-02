@@ -27,6 +27,24 @@ defmt = { version = "1.0", optional = true }
 log = { version = "0.4", optional = true }
 
 [dev-dependencies]
+# WASM tests — wasm-bindgen-test compiles for all targets;
+# on non-wasm32 the #[wasm_bindgen_test] attribute behaves like #[test].
+wasm-bindgen-test = "0.3"
+
+# XIAO ESP32C3 embedded tests (riscv32imc-unknown-none-elf only)
+[target.'cfg(all(target_arch = "riscv32", target_os = "none"))'.dev-dependencies]
+embedded-test = { version = "0.7", features = ["defmt"] }
+esp-hal        = { version = "1.0", features = ["esp32c3"] }
+defmt-rtt      = "1.1"
+panic-probe    = { version = "1.0", features = ["print-defmt"] }
+
+# ── Integration test binaries ─────────────────────────────────────────────
+
+# Embedded test binary for XIAO ESP32C3.
+# Compiled for all targets; tests only run on riscv32imc-unknown-none-elf.
+[[test]]
+name    = "test_esp32c3"
+harness = false
 
 # cargo build/run
 [profile.dev]
