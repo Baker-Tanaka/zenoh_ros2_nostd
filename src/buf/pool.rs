@@ -95,4 +95,46 @@ mod tests {
         let _b2 = pool.acquire().unwrap();
         assert!(pool.acquire().is_none());
     }
+
+    #[test]
+    fn test_release_clears_buffer() {
+        let mut pool: BufferPool<64, 2> = BufferPool::new();
+
+        let mut buf = pool.acquire().unwrap();
+        buf.extend_from_slice(&[1, 2, 3]).unwrap();
+        assert_eq!(buf.len(), 3);
+
+        pool.release(buf).unwrap();
+
+        // Re-acquired buffer should be empty
+        let buf = pool.acquire().unwrap();
+        assert_eq!(buf.len(), 0);
+    }
+
+    #[test]
+    fn test_single_buffer_pool() {
+        let mut pool: BufferPool<32, 1> = BufferPool::new();
+        assert_eq!(pool.available(), 1);
+
+        let buf = pool.acquire().unwrap();
+        assert_eq!(pool.available(), 0);
+        assert!(pool.acquire().is_none());
+
+        pool.release(buf).unwrap();
+        assert_eq!(pool.available(), 1);
+    }
+
+    #[test]
+    fn test_buffer_capacity() {
+        let mut pool: BufferPool<16, 1> = BufferPool::new();
+        let mut buf = pool.acquire().unwrap();
+
+        // Should be able to fill up to capacity
+        let data = [0xAA; 16];
+        buf.extend_from_slice(&data).unwrap();
+        assert_eq!(buf.len(), 16);
+
+        // Should fail to exceed capacity
+        assert!(buf.push(0xFF).is_err());
+    }
 }

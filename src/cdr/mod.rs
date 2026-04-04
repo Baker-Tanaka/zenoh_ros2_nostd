@@ -202,4 +202,112 @@ mod tests {
         let (decoded, _): (Mixed, _) = deserialize_from_buf(&buf[..len]).unwrap();
         assert_eq!(decoded, msg);
     }
+
+    #[test]
+    fn test_serialize_buffer_too_small() {
+        let msg = Vector3 {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+        };
+        let mut buf = [0u8; 4]; // Too small for 3 * f64
+        let result = serialize_to_buf(&mut buf, &msg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_serialize_with_header_buffer_too_small() {
+        let msg = 42u32;
+        let mut buf = [0u8; 3]; // Not even room for the 4-byte header
+        let result = serialize_with_header(&mut buf, &msg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_invalid_header() {
+        // CDR Big Endian header — we only support LE
+        let buf = [0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00];
+        let result = deserialize_with_header::<u32>(&buf);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_header_too_short() {
+        let buf = [0x00, 0x01]; // Only 2 bytes, need 4
+        let result = deserialize_with_header::<u32>(&buf);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_string_roundtrip() {
+        let s: heapless::String<32> = heapless::String::new();
+        let mut buf = [0u8; 64];
+        let len = serialize_to_buf(&mut buf, &s).unwrap();
+
+        let (decoded, _): (heapless::String<32>, _) = deserialize_from_buf(&buf[..len]).unwrap();
+        assert_eq!(decoded.as_str(), "");
+    }
+
+    #[test]
+    fn test_bool_roundtrip() {
+        let mut buf = [0u8; 16];
+
+        let len = serialize_to_buf(&mut buf, &true).unwrap();
+        let (val, _): (bool, _) = deserialize_from_buf(&buf[..len]).unwrap();
+        assert!(val);
+
+        let len = serialize_to_buf(&mut buf, &false).unwrap();
+        let (val, _): (bool, _) = deserialize_from_buf(&buf[..len]).unwrap();
+        assert!(!val);
+    }
+
+    #[test]
+    fn test_i32_negative() {
+        let mut buf = [0u8; 16];
+        let len = serialize_to_buf(&mut buf, &(-42i32)).unwrap();
+        let (val, _): (i32, _) = deserialize_from_buf(&buf[..len]).unwrap();
+        assert_eq!(val, -42);
+    }
+
+    #[test]
+    fn test_f32_special_values() {
+        let mut buf = [0u8; 16];
+        for &val in &[0.0f32, -0.0, f32::INFINITY, f32::NEG_INFINITY] {
+            let len = serialize_to_buf(&mut buf, &val).unwrap();
+            let (decoded, _): (f32, _) = deserialize_from_buf(&buf[..len]).unwrap();
+            assert_eq!(decoded.to_bits(), val.to_bits());
+        }
+    }
+
+    #[test]
+    fn test_nested_struct_with_string() {
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct Stamped {
+            seq: u32,
+            frame_id: heapless::String<64>,
+            value: f64,
+        }
+
+        let msg = Stamped {
+            seq: 42,
+            frame_id: heapless::String::try_from("base_link").unwrap(),
+            value: 3.14,
+        };
+
+        let mut buf = [0u8; 128];
+        let len = serialize_with_header(&mut buf, &msg).unwrap();
+        let (decoded, _): (Stamped, _) = deserialize_with_header(&buf[..len]).unwrap();
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn test_sequence_u32() {
+        // heapless::Vec<u32, N> should serialize as CDR sequence: [u32 len][elements]
+        let data: heapless::Vec<u32, 8> = heapless::Vec::from_slice(&[10, 20, 30]).unwrap();
+
+        let mut buf = [0u8; 64];
+        let len = serialize_to_buf(&mut buf, &data).unwrap();
+        let (decoded, _): (heapless::Vec<u32, 8>, _) = deserialize_from_buf(&buf[..len]).unwrap();
+        assert_eq!(decoded.as_slice(), &[10, 20, 30]);
+    }
 }

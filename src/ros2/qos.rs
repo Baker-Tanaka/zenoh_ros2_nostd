@@ -77,3 +77,54 @@ impl Default for Qos {
         Self::DEFAULT
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_qos() {
+        let qos = Qos::default();
+        assert_eq!(qos.reliability, Reliability::Reliable);
+        assert_eq!(qos.durability, Durability::Volatile);
+        assert_eq!(qos.history, History::KeepLast(10));
+    }
+
+    #[test]
+    fn test_sensor_data_qos() {
+        assert_eq!(Qos::SENSOR_DATA.reliability, Reliability::BestEffort);
+        assert_eq!(Qos::SENSOR_DATA.durability, Durability::Volatile);
+        assert_eq!(Qos::SENSOR_DATA.history, History::KeepLast(5));
+    }
+
+    #[test]
+    fn test_liveliness_str_all_combos() {
+        let qos_rv = Qos {
+            reliability: Reliability::Reliable,
+            durability: Durability::Volatile,
+            history: History::KeepLast(1),
+        };
+        assert_eq!(qos_rv.to_liveliness_str(), "RV");
+
+        let qos_rt = Qos {
+            reliability: Reliability::Reliable,
+            durability: Durability::TransientLocal,
+            history: History::KeepLast(1),
+        };
+        assert_eq!(qos_rt.to_liveliness_str(), "RT");
+
+        let qos_bv = Qos {
+            reliability: Reliability::BestEffort,
+            durability: Durability::Volatile,
+            history: History::KeepLast(1),
+        };
+        assert_eq!(qos_bv.to_liveliness_str(), "BV");
+
+        let qos_bt = Qos {
+            reliability: Reliability::BestEffort,
+            durability: Durability::TransientLocal,
+            history: History::KeepLast(1),
+        };
+        assert_eq!(qos_bt.to_liveliness_str(), "BT");
+    }
+}

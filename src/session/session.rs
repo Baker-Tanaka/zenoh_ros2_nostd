@@ -35,10 +35,7 @@ pub struct SessionConfig {
 impl SessionConfig {
     /// Create a new config with the given ZenohId.
     pub fn new(zid: ZenohId) -> Self {
-        Self {
-            zid,
-            domain_id: 0,
-        }
+        Self { zid, domain_id: 0 }
     }
 }
 
@@ -123,8 +120,8 @@ impl<T: Read + Write, const TX_BUF: usize, const RX_BUF: usize> Session<T, TX_BU
         // Encode declare keyexpr inside a frame
         let mut pos = 0;
         let sn = self.next_sn_reliable().await;
-        pos += codec::encode_frame_header(&mut tx_buf[pos..], sn, true)
-            .map_err(Error::Transport)?;
+        pos +=
+            codec::encode_frame_header(&mut tx_buf[pos..], sn, true).map_err(Error::Transport)?;
         pos += codec::encode_declare_keyexpr(&mut tx_buf[pos..], key_id, key_expr)
             .map_err(Error::Transport)?;
 
@@ -144,8 +141,8 @@ impl<T: Read + Write, const TX_BUF: usize, const RX_BUF: usize> Session<T, TX_BU
 
         let mut pos = 0;
         let sn = self.next_sn_reliable().await;
-        pos += codec::encode_frame_header(&mut tx_buf[pos..], sn, true)
-            .map_err(Error::Transport)?;
+        pos +=
+            codec::encode_frame_header(&mut tx_buf[pos..], sn, true).map_err(Error::Transport)?;
         // Encoding ID 0 = zenoh's application/octet-stream
         pos += codec::encode_push_put(&mut tx_buf[pos..], key_expr, 0, payload)
             .map_err(Error::Transport)?;
@@ -167,6 +164,71 @@ impl<T: Read + Write, const TX_BUF: usize, const RX_BUF: usize> Session<T, TX_BU
             .await
             .map_err(Error::Transport)?;
         Ok(())
+    }
+
+    /// Declare a subscriber for a key expression.
+    ///
+    /// First declares the key expression with a numeric ID, then
+    /// sends a DeclareSubscriber referencing that ID. Returns the
+    /// key ID  assigned to the key expression.
+    pub async fn subscribe(&self, key_expr: &str) -> Result<u16, Error> {
+        let key_id = self.declare_key_expr(key_expr).await?;
+
+        let sub_id = key_id as u32;
+        let mut tx_buf = [0u8; TX_BUF];
+        let mut pos = 0;
+        let sn = self.next_sn_reliable().await;
+        pos +=
+            codec::encode_frame_header(&mut tx_buf[pos..], sn, true).map_err(Error::Transport)?;
+        pos += codec::encode_declare_subscriber_mapped(&mut tx_buf[pos..], sub_id, key_id)
+            .map_err(Error::Transport)?;
+
+        let mut link = self.link.lock().await;
+        frame::write_frame(&mut *link, &tx_buf[..pos])
+            .await
+            .map_err(Error::Transport)?;
+
+        ros2_debug!("subscribed key_id={} expr={}", key_id, key_expr);
+        Ok(key_id)
+    }
+
+    /// Read one incoming frame and return the first Push+Put payload found.
+    ///
+    /// Returns `Some((key_suffix, payload_slice))` if a PUSH/PUT was received.
+    /// Returns `None` for KeepAlive or Declare frames (caller should call again).
+    /// The payload is written into `rx_buf`; the returned slices borrow from it.
+    pub async fn recv_once<'a>(
+        &self,
+        rx_buf: &'a mut [u8],
+    ) -> Result<Option<(&'a str, &'a [u8])>, Error> {
+        let n = {
+            let mut link = self.link.lock().await;
+            frame::read_frame(&mut *link, rx_buf)
+                .await
+                .map_err(Error::Transport)?
+        };
+
+        let msg_buf = &rx_buf[..n];
+
+        // Parse the transport message
+        let header = msg_buf[0];
+        match codec::parse_transport_msg_kind(header) {
+            codec::TransportMsgKind::Frame => {
+                let (_, _, body_pos) =
+                    codec::decode_frame_header(msg_buf).map_err(Error::Transport)?;
+                let body = &msg_buf[body_pos..];
+
+                match codec::decode_push_put(body).map_err(Error::Transport)? {
+                    Some((put, _)) => Ok(Some((put.key_suffix, put.payload))),
+                    None => Ok(None),
+                }
+            }
+            codec::TransportMsgKind::KeepAlive => Ok(None),
+            codec::TransportMsgKind::Close => Err(Error::Transport(
+                crate::error::TransportError::ConnectionClosed,
+            )),
+            _ => Ok(None),
+        }
     }
 
     /// Close the session gracefully.

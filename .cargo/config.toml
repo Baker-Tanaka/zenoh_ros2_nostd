@@ -21,6 +21,11 @@ rustflags = [
 #   cargo check --target thumbv6m-none-eabi
 # To run host tests:
 #   cargo test
+# To run WASM no_std tests:
+#   cargo test --target wasm32-wasip1 --no-default-features
+
+[target.wasm32-wasip1]
+runner = "wasmtime"
 
 [env]
 DEFMT_LOG = "debug"

@@ -159,3 +159,62 @@ impl defmt::Format for SessionError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cdr::CdrError;
+    extern crate alloc;
+    use alloc::format;
+
+    #[test]
+    fn test_from_transport_error() {
+        let te = TransportError::Io;
+        let e: Error = te.into();
+        assert_eq!(e, Error::Transport(TransportError::Io));
+    }
+
+    #[test]
+    fn test_from_session_error() {
+        let se = SessionError::Closed;
+        let e: Error = se.into();
+        assert_eq!(e, Error::Session(SessionError::Closed));
+    }
+
+    #[test]
+    fn test_from_cdr_error() {
+        let ce = CdrError::BufferOverflow;
+        let e: Error = ce.into();
+        assert_eq!(e, Error::Cdr(CdrError::BufferOverflow));
+    }
+
+    #[test]
+    fn test_error_display() {
+        let e = Error::NotConnected;
+        let s = format!("{}", e);
+        assert_eq!(s, "not connected");
+    }
+
+    #[test]
+    fn test_transport_error_display() {
+        let e = TransportError::FrameTooLarge;
+        let s = format!("{}", e);
+        assert_eq!(s, "frame too large");
+    }
+
+    #[test]
+    fn test_session_error_display() {
+        let e = SessionError::ResourceNotFound;
+        let s = format!("{}", e);
+        assert_eq!(s, "resource not found");
+    }
+
+    #[test]
+    fn test_error_clone_copy() {
+        let e1 = Error::Timeout;
+        let e2 = e1; // Copy
+        let e3 = e1.clone(); // Clone
+        assert_eq!(e1, e2);
+        assert_eq!(e1, e3);
+    }
+}

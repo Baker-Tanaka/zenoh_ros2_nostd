@@ -3,8 +3,8 @@
 //! Implements the message definitions for Zenoh protocol v8,
 //! compatible with zenoh router 1.x.
 
-/// Zenoh protocol version.
-pub const PROTO_VERSION: u8 = 8;
+/// Zenoh protocol version (matches zenoh 1.x).
+pub const PROTO_VERSION: u8 = 9;
 
 // --- WhatAmI ---
 
@@ -103,19 +103,20 @@ pub mod frame_flag {
 // --- Network message IDs ---
 
 pub mod network_id {
-    pub const PUSH: u8 = 0x00;
-    pub const REQUEST: u8 = 0x01;
-    pub const RESPONSE: u8 = 0x02;
-    pub const RESPONSE_FINAL: u8 = 0x03;
+    pub const PUSH: u8 = 0x1d;
+    pub const REQUEST: u8 = 0x1c;
+    pub const RESPONSE: u8 = 0x1b;
+    pub const RESPONSE_FINAL: u8 = 0x1a;
+    pub const INTEREST: u8 = 0x19;
     pub const DECLARE: u8 = 0x1e;
     pub const OAM: u8 = 0x1f;
 }
 
 pub mod push_flag {
-    /// Mapping: wire expression uses a declared resource ID.
-    pub const M: u8 = 1 << 5;
-    /// Wire expression has a suffix.
-    pub const N: u8 = 1 << 6;
+    /// Named: wire expression has a name/suffix string.
+    pub const N: u8 = 1 << 5;
+    /// Mapping: sender's declared key ID is used for the scope.
+    pub const M: u8 = 1 << 6;
     /// More extensions follow.
     pub const Z: u8 = 1 << 7;
 }
@@ -123,11 +124,12 @@ pub mod push_flag {
 // --- Zenoh message IDs ---
 
 pub mod zenoh_id {
-    pub const PUT: u8 = 0x00;
+    pub const OAM: u8 = 0x00;
+    pub const PUT: u8 = 0x01;
     pub const DEL: u8 = 0x02;
-    pub const QUERY: u8 = 0x04;
-    pub const REPLY: u8 = 0x06;
-    pub const ERR: u8 = 0x08;
+    pub const QUERY: u8 = 0x03;
+    pub const REPLY: u8 = 0x04;
+    pub const ERR: u8 = 0x05;
 }
 
 pub mod put_flag {
@@ -150,6 +152,23 @@ pub mod declare_id {
     pub const U_QUERYABLE: u8 = 0x05;
     pub const D_TOKEN: u8 = 0x06;
     pub const U_TOKEN: u8 = 0x07;
+    pub const D_FINAL: u8 = 0x1a;
+}
+
+pub mod declare_keyexpr_flag {
+    /// Named: wire expression has a name/suffix string.
+    pub const N: u8 = 1 << 5;
+    /// More extensions follow.
+    pub const Z: u8 = 1 << 7;
+}
+
+pub mod declare_subscriber_flag {
+    /// Named: wire expression has a suffix string.
+    pub const N: u8 = 1 << 5;
+    /// Mapped: scope references a sender-declared key ID.
+    pub const M: u8 = 1 << 6;
+    /// More extensions follow.
+    pub const Z: u8 = 1 << 7;
 }
 
 // --- High-level transport messages ---

@@ -27,6 +27,17 @@ defmt = { version = "1.0", optional = true }
 log = { version = "0.4", optional = true }
 
 [dev-dependencies]
+tokio = { version = "1", features = [
+    "macros",
+    "rt-multi-thread",
+    "net",
+    "time",
+    "process",
+] }
+embedded-io-adapters = { version = "0.6", features = ["tokio-1"] }
+# Provides _critical_section_1_0_acquire/release symbols for host builds
+# that use embassy_sync::Mutex<CriticalSectionRawMutex, _>.
+critical-section = { version = "1", features = ["std"] }
 
 # cargo build/run
 [profile.dev]

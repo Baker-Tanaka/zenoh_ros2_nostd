@@ -10,16 +10,13 @@ pub const DEFAULT_BATCH_SIZE: usize = 8192;
 
 /// Write a length-prefixed frame to the transport.
 ///
-/// Format: `[u16 BE length][payload]`
-pub async fn write_frame<W: Write>(
-    writer: &mut W,
-    payload: &[u8],
-) -> Result<(), TransportError> {
+/// Format: `[u16 LE length][payload]`
+pub async fn write_frame<W: Write>(writer: &mut W, payload: &[u8]) -> Result<(), TransportError> {
     let len = payload.len();
     if len > u16::MAX as usize {
         return Err(TransportError::FrameTooLarge);
     }
-    let len_bytes = (len as u16).to_be_bytes();
+    let len_bytes = (len as u16).to_le_bytes();
     writer
         .write_all(&len_bytes)
         .await
@@ -34,17 +31,14 @@ pub async fn write_frame<W: Write>(
 /// Read a length-prefixed frame from the transport into `buf`.
 ///
 /// Returns the number of payload bytes read.
-pub async fn read_frame<R: Read>(
-    reader: &mut R,
-    buf: &mut [u8],
-) -> Result<usize, TransportError> {
+pub async fn read_frame<R: Read>(reader: &mut R, buf: &mut [u8]) -> Result<usize, TransportError> {
     // Read the 2-byte length prefix
     let mut len_bytes = [0u8; 2];
     reader
         .read_exact(&mut len_bytes)
         .await
         .map_err(|_| TransportError::Io)?;
-    let len = u16::from_be_bytes(len_bytes) as usize;
+    let len = u16::from_le_bytes(len_bytes) as usize;
 
     if len == 0 {
         return Ok(0);

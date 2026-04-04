@@ -105,10 +105,38 @@ pub fn encode_string(buf: &mut [u8], s: &str) -> Result<usize, TransportError> {
     encode_slice(buf, s.as_bytes())
 }
 
+// ====== WhatAmI 2-bit encoding (for Init flags byte) ======
+
+/// Encode WhatAmI to 2-bit value for the Init flags byte.
+fn whatami_to_2bit(w: WhatAmI) -> u8 {
+    match w {
+        WhatAmI::Router => 0b00,
+        WhatAmI::Peer => 0b01,
+        WhatAmI::Client => 0b10,
+    }
+}
+
+/// Decode WhatAmI from 2-bit value in the Init flags byte.
+fn whatami_from_2bit(bits: u8) -> Result<WhatAmI, TransportError> {
+    match bits & 0b11 {
+        0b00 => Ok(WhatAmI::Router),
+        0b01 => Ok(WhatAmI::Peer),
+        0b10 => Ok(WhatAmI::Client),
+        _ => Err(TransportError::InvalidEncoding),
+    }
+}
+
 // ====== InitSyn encoding ======
 
 /// Encode an InitSyn message into `buf`.
 /// Returns the number of bytes written.
+///
+/// Wire format (zenoh v9):
+/// ```text
+/// [header: u8][version: u8][flags: u8][zid: N bytes]
+/// flags = (zid_len - 1) << 4 | whatami_2bit
+/// if S flag: [resolution: u8][batch_size: u16 LE]
+/// ```
 pub fn encode_init_syn(buf: &mut [u8], msg: &InitSyn) -> Result<usize, TransportError> {
     let mut pos = 0;
 
@@ -130,19 +158,28 @@ pub fn encode_init_syn(buf: &mut [u8], msg: &InitSyn) -> Result<usize, Transport
     buf[pos] = msg.version;
     pos += 1;
 
-    // WhatAmI (encoded as zint)
-    pos += encode_vbyte(&mut buf[pos..], msg.whatami as u64)?;
+    // Flags byte: (zid_len - 1) << 4 | whatami_2bit
+    let zid_bytes = msg.zid.as_bytes();
+    let flags = ((zid_bytes.len() as u8 - 1) << 4) | whatami_to_2bit(msg.whatami);
+    if pos >= buf.len() {
+        return Err(TransportError::FrameTooLarge);
+    }
+    buf[pos] = flags;
+    pos += 1;
 
-    // ZenohId
-    pos += encode_zenoh_id(&mut buf[pos..], &msg.zid)?;
+    // ZenohId raw bytes (length encoded in flags)
+    if pos + zid_bytes.len() > buf.len() {
+        return Err(TransportError::FrameTooLarge);
+    }
+    buf[pos..pos + zid_bytes.len()].copy_from_slice(zid_bytes);
+    pos += zid_bytes.len();
 
-    // Batch size extension (if S flag)
+    // Resolution + Batch size (if S flag)
     if let Some(bs) = msg.batch_size {
-        // Extension header: type=1 (QoS), more=0
         if pos + 3 > buf.len() {
             return Err(TransportError::FrameTooLarge);
         }
-        buf[pos] = 0x01; // extension type
+        buf[pos] = 0x00; // Resolution::default()
         pos += 1;
         buf[pos..pos + 2].copy_from_slice(&bs.to_le_bytes());
         pos += 2;
@@ -154,6 +191,15 @@ pub fn encode_init_syn(buf: &mut [u8], msg: &InitSyn) -> Result<usize, Transport
 // ====== InitAck decoding ======
 
 /// Decode an InitAck message from `buf`.
+///
+/// Wire format (zenoh v9):
+/// ```text
+/// [header: u8][version: u8][flags: u8][zid: N bytes]
+/// flags = (zid_len - 1) << 4 | whatami_2bit
+/// if S flag: [resolution: u8][batch_size: u16 LE]
+/// [cookie: vbyte_len + bytes]
+/// if Z flag: extensions (skipped)
+/// ```
 pub fn decode_init_ack(buf: &[u8]) -> Result<(InitAck, usize), TransportError> {
     let mut pos = 0;
 
@@ -181,21 +227,36 @@ pub fn decode_init_ack(buf: &[u8]) -> Result<(InitAck, usize), TransportError> {
     let version = buf[pos];
     pos += 1;
 
-    // WhatAmI
-    let (whatami_val, n) = decode_vbyte(&buf[pos..])?;
-    pos += n;
-    let whatami = match whatami_val {
-        0x01 => WhatAmI::Router,
-        0x02 => WhatAmI::Peer,
-        0x04 => WhatAmI::Client,
-        _ => return Err(TransportError::InvalidEncoding),
-    };
+    // Flags byte: (zid_len - 1) << 4 | whatami_2bit
+    if pos >= buf.len() {
+        return Err(TransportError::InvalidEncoding);
+    }
+    let flags = buf[pos];
+    pos += 1;
 
-    // ZenohId
-    let (zid, n) = decode_zenoh_id(&buf[pos..])?;
-    pos += n;
+    let whatami = whatami_from_2bit(flags)?;
+    let zid_len = ((flags >> 4) as usize) + 1;
 
-    // Cookie
+    // ZenohId raw bytes
+    if pos + zid_len > buf.len() {
+        return Err(TransportError::InvalidEncoding);
+    }
+    let zid = ZenohId::from_bytes(&buf[pos..pos + zid_len]);
+    pos += zid_len;
+
+    // Resolution + Batch size (if S flag)
+    let mut batch_size = None;
+    if has_batch_size {
+        if pos + 3 > buf.len() {
+            return Err(TransportError::InvalidEncoding);
+        }
+        let _resolution = buf[pos]; // Resolution flags (ignored for now)
+        pos += 1;
+        batch_size = Some(u16::from_le_bytes([buf[pos], buf[pos + 1]]));
+        pos += 2;
+    }
+
+    // Cookie (vbyte-length-prefixed)
     let (cookie_bytes, n) = decode_slice(&buf[pos..])?;
     pos += n;
     let mut cookie = heapless::Vec::new();
@@ -203,21 +264,33 @@ pub fn decode_init_ack(buf: &[u8]) -> Result<(InitAck, usize), TransportError> {
         .extend_from_slice(cookie_bytes)
         .map_err(|_| TransportError::FrameTooLarge)?;
 
-    // Batch size extension
-    let mut batch_size = None;
-    if has_batch_size {
-        if pos + 3 > buf.len() {
-            return Err(TransportError::InvalidEncoding);
-        }
-        let _ext_type = buf[pos];
-        pos += 1;
-        batch_size = Some(u16::from_le_bytes([buf[pos], buf[pos + 1]]));
-        pos += 2;
-    }
-
-    // Skip remaining extensions
+    // Skip extensions
     if has_ext {
-        // TODO: properly skip chained extensions
+        while pos < buf.len() {
+            let ext_header = buf[pos];
+            pos += 1;
+            let has_more = ext_header & 0x80 != 0;
+            let encoding = (ext_header >> 5) & 0x03;
+            match encoding {
+                0 => {
+                    // ZExtUnit: no body
+                }
+                1 => {
+                    // ZExtZ64: VByte body
+                    let (_, n) = decode_vbyte(&buf[pos..])?;
+                    pos += n;
+                }
+                2 | 3 => {
+                    // ZExtZBuf: vbyte-length-prefixed bytes
+                    let (_, n) = decode_slice(&buf[pos..])?;
+                    pos += n;
+                }
+                _ => {}
+            }
+            if !has_more {
+                break;
+            }
+        }
     }
 
     Ok((
@@ -293,7 +366,13 @@ pub fn decode_open_ack(buf: &[u8]) -> Result<(OpenAck, usize), TransportError> {
     let (initial_sn, n) = decode_vbyte(&buf[pos..])?;
     pos += n;
 
-    Ok((OpenAck { lease_ms, initial_sn }, pos))
+    Ok((
+        OpenAck {
+            lease_ms,
+            initial_sn,
+        },
+        pos,
+    ))
 }
 
 // ====== KeepAlive ======
@@ -351,6 +430,9 @@ pub fn encode_frame_header(
 }
 
 /// Decode a Frame header. Returns (sn, reliable, body_start_pos).
+///
+/// body_start_pos points to the first network message after the Frame header
+/// and any extensions (QoS etc. if Z flag is set).
 pub fn decode_frame_header(buf: &[u8]) -> Result<(u64, bool, usize), TransportError> {
     if buf.is_empty() {
         return Err(TransportError::InvalidEncoding);
@@ -360,8 +442,14 @@ pub fn decode_frame_header(buf: &[u8]) -> Result<(u64, bool, usize), TransportEr
         return Err(TransportError::InvalidEncoding);
     }
     let reliable = header & frame_flag::R != 0;
+    let has_ext = header & frame_flag::Z != 0;
     let (sn, n) = decode_vbyte(&buf[1..])?;
-    Ok((sn, reliable, 1 + n))
+    let mut pos = 1 + n;
+    // Skip frame-level extensions (e.g. QoS) if Z flag is set
+    if has_ext {
+        skip_extensions(buf, &mut pos)?;
+    }
+    Ok((sn, reliable, pos))
 }
 
 // ====== Push + Put (for publishing) ======
@@ -392,16 +480,18 @@ pub fn encode_push_put(
     // Suffix (the key expression string)
     pos += encode_string(&mut buf[pos..], key_expr)?;
 
-    // Put header: no timestamp, no extensions
-    let put_header = zenoh_id::PUT;
+    // Put header: set E flag only when encoding_id is non-zero
+    let put_header = zenoh_id::PUT | if encoding_id != 0 { put_flag::E } else { 0 };
     if pos >= buf.len() {
         return Err(TransportError::FrameTooLarge);
     }
     buf[pos] = put_header;
     pos += 1;
 
-    // Encoding
-    pos += encode_vbyte(&mut buf[pos..], encoding_id)?;
+    // Encoding (only written when E flag is set): wire format is VByte32(id << 1 | schema_flag)
+    if encoding_id != 0 {
+        pos += encode_vbyte(&mut buf[pos..], encoding_id << 1)?;
+    }
 
     // Payload
     pos += encode_slice(&mut buf[pos..], payload)?;
@@ -431,19 +521,27 @@ pub fn encode_declare_keyexpr(
 
     // Number of declarations = 1 (we batch one at a time for simplicity)
     // Actually in zenoh, declarations are just listed with an "end" marker.
-    // Declaration: DeclareKeyExpr
+    // Declaration: DeclareKeyExpr (N flag set when suffix is non-empty)
     if pos >= buf.len() {
         return Err(TransportError::FrameTooLarge);
     }
-    buf[pos] = declare_id::D_KEYEXPR;
+    let dkeyexpr_header = declare_id::D_KEYEXPR
+        | if !key_expr.is_empty() {
+            declare_keyexpr_flag::N
+        } else {
+            0
+        };
+    buf[pos] = dkeyexpr_header;
     pos += 1;
 
     // Key expression ID
     pos += encode_vbyte(&mut buf[pos..], key_id as u64)?;
 
-    // Wire expression: scope=0 + suffix
+    // Wire expression: scope=0 + suffix (suffix only written when N flag set)
     pos += encode_vbyte(&mut buf[pos..], 0)?; // scope
-    pos += encode_string(&mut buf[pos..], key_expr)?;
+    if !key_expr.is_empty() {
+        pos += encode_string(&mut buf[pos..], key_expr)?;
+    }
 
     Ok(pos)
 }
@@ -506,7 +604,181 @@ pub fn parse_transport_msg_kind(header: u8) -> TransportMsgKind {
     }
 }
 
-#[cfg(test)]
+// ====== Incoming message decoding ======
+
+/// A decoded incoming Push+Put message from a zenoh Frame body.
+#[derive(Debug)]
+pub struct IncomingPut<'a> {
+    /// Key expression scope (0 = inline, >0 = declared key ID).
+    pub scope: u64,
+    /// Key expression suffix string (present when N flag set in Push header).
+    pub key_suffix: &'a str,
+    /// CDR payload bytes (VByte-length-prefixed body of Put).
+    pub payload: &'a [u8],
+}
+
+/// Skip over all extensions (ZExtUnit, ZExtZ64, ZExtZBuf) in a message.
+/// Extensions follow the pattern: [ext_header][body?] where more-bit = bit7 of ext_header.
+fn skip_extensions(buf: &[u8], pos: &mut usize) -> Result<(), TransportError> {
+    while *pos < buf.len() {
+        let ext = buf[*pos];
+        *pos += 1;
+        let has_more = ext & 0x80 != 0;
+        let encoding = (ext >> 5) & 0x03;
+        match encoding {
+            0 => {} // ZExtUnit: no body
+            1 => {
+                // ZExtZ64: VByte body
+                let (_, n) = decode_vbyte(&buf[*pos..])?;
+                *pos += n;
+            }
+            2 | 3 => {
+                // ZExtZBuf: VByte-length-prefixed bytes
+                let (_, n) = decode_slice(&buf[*pos..])?;
+                *pos += n;
+            }
+            _ => {}
+        }
+        if !has_more {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Decode one Push+Put network message from a Frame body.
+///
+/// `buf` starts immediately after the Frame header+SN.
+/// Returns `(IncomingPut, bytes_consumed)` on success, or `None` if the
+/// message is not a Push/Put (e.g. a Declare or KeepAlive inside the frame).
+pub fn decode_push_put<'a>(
+    buf: &'a [u8],
+) -> Result<Option<(IncomingPut<'a>, usize)>, TransportError> {
+    if buf.is_empty() {
+        return Ok(None);
+    }
+    let mut pos = 0;
+
+    let push_header = buf[pos];
+    pos += 1;
+
+    // Check network message ID
+    if push_header & 0x1F != network_id::PUSH {
+        return Ok(None);
+    }
+
+    let has_suffix = push_header & push_flag::N != 0;
+    let has_ext = push_header & push_flag::Z != 0;
+
+    // WireExpr: scope VByte, then suffix string if N flag
+    let (scope, n) = decode_vbyte(&buf[pos..])?;
+    pos += n;
+
+    let key_suffix = if has_suffix {
+        let (bytes, n) = decode_slice(&buf[pos..])?;
+        pos += n;
+        core::str::from_utf8(bytes).map_err(|_| TransportError::InvalidEncoding)?
+    } else {
+        ""
+    };
+
+    // Skip Push extensions
+    if has_ext {
+        skip_extensions(buf, &mut pos)?;
+    }
+
+    // PushBody: expect Put (zenoh_id::PUT = 0x01)
+    if pos >= buf.len() {
+        return Err(TransportError::InvalidEncoding);
+    }
+    let put_header = buf[pos];
+    pos += 1;
+
+    if put_header & 0x1F != zenoh_id::PUT {
+        return Ok(None); // Del or other PushBody — not a Put
+    }
+
+    let has_encoding = put_header & put_flag::E != 0;
+    let has_timestamp = put_header & put_flag::T != 0;
+    let has_ext = put_header & put_flag::Z != 0;
+
+    // Timestamp (if T flag)
+    if has_timestamp {
+        // NTP64 = VByte-encoded u64 (LEB128), NOT a fixed 8-byte field
+        let (_, n) = decode_vbyte(&buf[pos..])?;
+        pos += n;
+        // ZenohId: VByte(size) + size bytes
+        let (id_size, n) = decode_vbyte(&buf[pos..])?;
+        pos += n;
+        let id_size = id_size as usize;
+        if pos + id_size > buf.len() {
+            return Err(TransportError::InvalidEncoding);
+        }
+        pos += id_size;
+    }
+
+    // Encoding (if E flag): VByte(id<<1|schema_flag)
+    if has_encoding {
+        let (_, n) = decode_vbyte(&buf[pos..])?;
+        pos += n;
+    }
+
+    // Extensions
+    if has_ext {
+        skip_extensions(buf, &mut pos)?;
+    }
+
+    // Payload: VByte(len) + bytes
+    let (payload, n) = decode_slice(&buf[pos..])?;
+    pos += n;
+
+    Ok(Some((
+        IncomingPut {
+            scope,
+            key_suffix,
+            payload,
+        },
+        pos,
+    )))
+}
+
+/// Fix `encode_declare_subscriber` — declare subscriber referencing a mapped key ID.
+///
+/// Wire format:
+///   `[DECLARE header][D_SUBSCRIBER | M][sub_id: VByte][scope=key_id: VByte]`
+///
+/// The M flag tells the router that `scope` is in the sender's (our) namespace,
+/// i.e. it refers to a key ID we declared with D_KEYEXPR.
+pub fn encode_declare_subscriber_mapped(
+    buf: &mut [u8],
+    sub_id: u32,
+    key_id: u16,
+) -> Result<usize, TransportError> {
+    let mut pos = 0;
+
+    // Network Declare header (no I flag, no Z flag for simplicity)
+    if pos >= buf.len() {
+        return Err(TransportError::FrameTooLarge);
+    }
+    buf[pos] = network_id::DECLARE;
+    pos += 1;
+
+    // D_SUBSCRIBER | M: references sender's declared key by ID
+    if pos >= buf.len() {
+        return Err(TransportError::FrameTooLarge);
+    }
+    buf[pos] = declare_id::D_SUBSCRIBER | declare_subscriber_flag::M;
+    pos += 1;
+
+    // Subscriber ID
+    pos += encode_vbyte(&mut buf[pos..], sub_id as u64)?;
+
+    // WireExpr: scope = key_id (mapped), no suffix (N not set)
+    pos += encode_vbyte(&mut buf[pos..], key_id as u64)?;
+
+    Ok(pos)
+}
+
 mod tests {
     use super::*;
 
@@ -570,6 +842,16 @@ mod tests {
         // Verify header
         assert_eq!(buf[0] & 0x1F, transport_id::INIT);
         assert_eq!(buf[0] & init_flag::A, 0); // SYN, not ACK
+
+        // Verify version
+        assert_eq!(buf[1], PROTO_VERSION);
+
+        // Verify flags byte: zid_len=8 → (8-1)<<4 = 0x70, Client = 0b10
+        assert_eq!(buf[2], 0x70 | 0x02);
+
+        // Verify ZenohId starts at byte 3
+        assert_eq!(&buf[3..11], &[0xAB; 8]);
+        assert_eq!(n, 11); // 1 + 1 + 1 + 8
     }
 
     #[test]
@@ -589,5 +871,198 @@ mod tests {
         assert_eq!(sn, 42);
         assert!(reliable);
         assert_eq!(body_pos, n);
+    }
+
+    #[test]
+    fn test_frame_header_best_effort() {
+        let mut buf = [0u8; 16];
+        let n = encode_frame_header(&mut buf, 100, false).unwrap();
+        let (sn, reliable, _) = decode_frame_header(&buf[..n]).unwrap();
+        assert_eq!(sn, 100);
+        assert!(!reliable);
+    }
+
+    #[test]
+    fn test_vbyte_zero() {
+        let mut buf = [0u8; 16];
+        let n = encode_vbyte(&mut buf, 0).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(buf[0], 0);
+
+        let (val, consumed) = decode_vbyte(&buf).unwrap();
+        assert_eq!(val, 0);
+        assert_eq!(consumed, 1);
+    }
+
+    #[test]
+    fn test_vbyte_max_single_byte() {
+        let mut buf = [0u8; 16];
+        let n = encode_vbyte(&mut buf, 127).unwrap();
+        assert_eq!(n, 1);
+
+        let (val, _) = decode_vbyte(&buf).unwrap();
+        assert_eq!(val, 127);
+    }
+
+    #[test]
+    fn test_vbyte_boundary_128() {
+        let mut buf = [0u8; 16];
+        let n = encode_vbyte(&mut buf, 128).unwrap();
+        assert_eq!(n, 2);
+
+        let (val, consumed) = decode_vbyte(&buf).unwrap();
+        assert_eq!(val, 128);
+        assert_eq!(consumed, 2);
+    }
+
+    #[test]
+    fn test_vbyte_buffer_too_small() {
+        let mut buf = [0u8; 1];
+        let result = encode_vbyte(&mut buf, 128); // Needs 2 bytes
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decode_vbyte_empty() {
+        let buf: &[u8] = &[];
+        assert!(decode_vbyte(buf).is_err());
+    }
+
+    #[test]
+    fn test_slice_roundtrip() {
+        let data = b"hello zenoh";
+        let mut buf = [0u8; 64];
+        let n = encode_slice(&mut buf, data).unwrap();
+
+        let (decoded, consumed) = decode_slice(&buf[..n]).unwrap();
+        assert_eq!(decoded, data);
+        assert_eq!(consumed, n);
+    }
+
+    #[test]
+    fn test_slice_empty() {
+        let mut buf = [0u8; 16];
+        let n = encode_slice(&mut buf, &[]).unwrap();
+        let (decoded, consumed) = decode_slice(&buf[..n]).unwrap();
+        assert!(decoded.is_empty());
+        assert_eq!(consumed, n);
+    }
+
+    #[test]
+    fn test_zenoh_id_single_byte() {
+        let zid = ZenohId::from_bytes(&[0xFF]);
+        let mut buf = [0u8; 32];
+        let n = encode_zenoh_id(&mut buf, &zid).unwrap();
+
+        let (decoded, consumed) = decode_zenoh_id(&buf[..n]).unwrap();
+        assert_eq!(consumed, n);
+        assert_eq!(decoded.as_bytes(), &[0xFF]);
+    }
+
+    #[test]
+    fn test_zenoh_id_max_16_bytes() {
+        let zid = ZenohId::from_bytes(&[0xAA; 16]);
+        assert_eq!(zid.len, 16);
+
+        let mut buf = [0u8; 32];
+        let n = encode_zenoh_id(&mut buf, &zid).unwrap();
+        let (decoded, _) = decode_zenoh_id(&buf[..n]).unwrap();
+        assert_eq!(decoded.as_bytes(), &[0xAA; 16]);
+    }
+
+    #[test]
+    fn test_decode_zenoh_id_empty_buf() {
+        assert!(decode_zenoh_id(&[]).is_err());
+    }
+
+    #[test]
+    fn test_close_encode() {
+        let mut buf = [0u8; 8];
+        let n = encode_close(&mut buf, close_reason::GENERIC).unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(buf[0] & 0x1F, transport_id::CLOSE);
+        assert_eq!(buf[1], close_reason::GENERIC);
+    }
+
+    #[test]
+    fn test_push_put_encode() {
+        let mut buf = [0u8; 256];
+        let payload = b"hello ROS2";
+        let n = encode_push_put(
+            &mut buf,
+            "0/chatter/std_msgs::msg::String/RIHS01",
+            0,
+            payload,
+        )
+        .unwrap();
+        assert!(n > 0);
+
+        // Verify push header
+        assert_eq!(buf[0] & 0x1F, network_id::PUSH);
+        assert_ne!(buf[0] & push_flag::N, 0); // suffix flag set
+    }
+
+    #[test]
+    fn test_parse_transport_msg_kind() {
+        assert_eq!(
+            parse_transport_msg_kind(transport_id::INIT),
+            TransportMsgKind::Init
+        );
+        assert_eq!(
+            parse_transport_msg_kind(transport_id::OPEN | 0x60),
+            TransportMsgKind::Open
+        );
+        assert_eq!(
+            parse_transport_msg_kind(transport_id::KEEP_ALIVE),
+            TransportMsgKind::KeepAlive
+        );
+        assert_eq!(
+            parse_transport_msg_kind(transport_id::FRAME | frame_flag::R),
+            TransportMsgKind::Frame
+        );
+        assert_eq!(
+            parse_transport_msg_kind(0xFF),
+            TransportMsgKind::Other(0x1F)
+        );
+    }
+
+    #[test]
+    fn test_keepalive_not_other_msg() {
+        assert!(!is_keepalive(transport_id::FRAME));
+        assert!(!is_keepalive(transport_id::INIT));
+    }
+
+    #[test]
+    fn test_decode_frame_header_wrong_id() {
+        let buf = [transport_id::INIT]; // Not a FRAME
+        assert!(decode_frame_header(&buf).is_err());
+    }
+
+    #[test]
+    fn test_init_syn_with_batch_size() {
+        let msg = InitSyn {
+            version: PROTO_VERSION,
+            whatami: WhatAmI::Client,
+            zid: ZenohId::from_bytes(&[0x01; 4]),
+            batch_size: Some(65535),
+        };
+
+        let mut buf = [0u8; 64];
+        let n = encode_init_syn(&mut buf, &msg).unwrap();
+
+        // S flag should be set
+        assert_ne!(buf[0] & init_flag::S, 0);
+
+        // flags byte: zid_len=4 → (4-1)<<4 = 0x30, Client = 0b10
+        assert_eq!(buf[2], 0x30 | 0x02);
+
+        // After 4 bytes of zid: resolution(1) + batch_size(2)
+        let res_pos = 3 + 4;
+        assert_eq!(buf[res_pos], 0x00); // Resolution::default
+        assert_eq!(
+            u16::from_le_bytes([buf[res_pos + 1], buf[res_pos + 2]]),
+            65535
+        );
+        assert_eq!(n, 3 + 4 + 3); // header + version + flags + zid + resolution + batch_size
     }
 }
