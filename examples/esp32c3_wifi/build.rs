@@ -17,9 +17,11 @@ fn main() {
         .unwrap_or_else(|| panic!("wifi_config.json: missing or invalid \"ssid\" field"));
     let password = extract_str(&json, "password")
         .unwrap_or_else(|| panic!("wifi_config.json: missing or invalid \"password\" field"));
+    let router_addr = extract_str(&json, "router_addr").unwrap_or("192.168.1.1:7447");
 
     println!("cargo:rustc-env=WIFI_SSID={ssid}");
     println!("cargo:rustc-env=WIFI_PASSWORD={password}");
+    println!("cargo:rustc-env=ZENOH_ROUTER_ADDR={router_addr}");
 }
 
 /// Extract the string value for `key` from a simple flat JSON object.
