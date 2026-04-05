@@ -27,7 +27,7 @@ pub struct TopicPublisher<'a, T: Read + Write, const TX: usize, const RX: usize>
     topic_ke: &'a TopicKeyExpr,
     cdr_buf: &'a mut [u8],
     /// Monotonically increasing sequence number per publish call.
-    seq_num: u64,
+    seq_num: i64,
     /// Publisher GID — copied from the session's ZenohId at construction time.
     gid: ZenohId,
 }
@@ -44,7 +44,7 @@ impl<'a, T: Read + Write, const TX: usize, const RX: usize> TopicPublisher<'a, T
             session,
             topic_ke,
             cdr_buf,
-            seq_num: 0,
+            seq_num: 0i64,
             gid,
         }
     }
@@ -63,11 +63,13 @@ impl<'a, T: Read + Write, const TX: usize, const RX: usize> TopicPublisher<'a, T
         let ke = self.topic_ke.to_key_expr().map_err(|_| Error::InvalidArgument)?;
 
         // Sequence number and timestamp
-        let seq = self.seq_num as i64;
+        let seq = self.seq_num;
         self.seq_num = self.seq_num.wrapping_add(1);
 
-        // Use elapsed time in nanoseconds as timestamp (no RTC available on bare-metal MCU)
-        let timestamp_ns = embassy_time::Instant::now().as_micros() as i64 * 1000;
+        // Use elapsed time in nanoseconds as timestamp.
+        // Note: this is time-since-boot, not UNIX epoch — convert to i64 before
+        // multiplying to avoid overflow (saturating_mul prevents wrap-around).
+        let timestamp_ns = (embassy_time::Instant::now().as_micros() as i64).saturating_mul(1000);
 
         // Publish with attachment
         self.session

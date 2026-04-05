@@ -48,7 +48,7 @@ use embassy_futures::select::select;
 use embassy_net::{DhcpConfig, IpEndpoint, Runner, Stack, StackResources, tcp::TcpSocket};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_time::{with_timeout, Duration, Timer};
+use embassy_time::{with_timeout, Duration, Instant, Timer};
 use esp_alloc as _;
 use esp_hal::{
     clock::CpuClock, interrupt::software::SoftwareInterruptControl, ram, rng::Rng,
@@ -90,7 +90,8 @@ const CHATTER_TOPIC: TopicKeyExpr = TopicKeyExpr::new(
     "RIHS01_df668c740482bbd48fb39d76a70dfd4bd59db1288021743503259e948f6b1a18",
 );
 
-/// std_msgs/String equivalent for embedded use.
+/// Zenoh key expression ID for /chatter (used when declaring the subscriber).
+const CHATTER_KEY_ID: u16 = 1;
 #[derive(Serialize, Deserialize, Debug)]
 struct StringMsg {
     data: String<128>,
@@ -261,7 +262,6 @@ async fn zenoh_task(stack: Stack<'static>) {
         // ---- 4. Declare subscriber ------------------------------------------
         // Declare key expression + subscriber for /chatter before splitting.
         let chatter_ke = CHATTER_TOPIC.to_key_expr().unwrap();
-        const CHATTER_KEY_ID: u16 = 1;
         let mut sn = 0u64;
         let mut decl_buf = [0u8; 512];
 
@@ -314,13 +314,14 @@ async fn zenoh_task(stack: Stack<'static>) {
         let (mut reader, mut writer) = socket.split();
         let mut rx_buf = [0u8; 4096];
         let mut tx_buf = [0u8; 512];
+        let mut pub_sn = 0i64; // publisher-level sequence number (separate from session sn)
 
         // RX loop: read frames and dispatch to CHATTER_SUB
         // TX loop: keepalive + publish from PUB_CHANNEL
         // select terminates when either loop returns (i.e., on connection error)
         select(
             rx_loop(&mut reader, &mut rx_buf, chatter_ke.as_str()),
-            tx_loop(&mut writer, &mut tx_buf, &mut sn, lease_ms),
+            tx_loop(&mut writer, &mut tx_buf, &mut sn, &mut pub_sn, lease_ms, our_zid),
         )
         .await;
 
@@ -356,10 +357,11 @@ async fn rx_loop<R: embedded_io_async::Read>(
                 if let Ok((_, _, body_pos)) = decode_frame_header(msg_buf) {
                     let body = &msg_buf[body_pos..];
                     if let Ok(Some((put, _))) = decode_push_put(body) {
-                        // Dispatch to the correct subscriber based on key suffix
-                        if put.key_suffix.contains(sub_key)
-                            || put.scope > 0 /* mapped key — accept all for now */
-                        {
+                        // Dispatch by matching the inline key suffix or the declared key ID.
+                        // CHATTER_KEY_ID == 1 is what we declared for /chatter above.
+                        let matches_key = put.key_suffix.contains(sub_key);
+                        let matches_scope = put.scope == CHATTER_KEY_ID as u64;
+                        if matches_key || matches_scope {
                             CHATTER_SUB.inner().push(put.payload);
                         }
                     }
@@ -376,12 +378,17 @@ async fn rx_loop<R: embedded_io_async::Read>(
 
 /// Send keepalives on a timer and drain PUB_CHANNEL to the wire.
 ///
+/// Uses `encode_push_put_with_attachment` so messages include the rmw_zenoh_cpp
+/// publisher attachment (sequence number, timestamp, GID).
+///
 /// Returns when a write error occurs; the caller should then reconnect.
 async fn tx_loop<W: embedded_io_async::Write>(
     writer: &mut W,
     tx_buf: &mut [u8],
     sn: &mut u64,
+    pub_sn: &mut i64,
     lease_ms: u64,
+    gid: ZenohId,
 ) {
     let keepalive_dur = Duration::from_millis(lease_ms / 2);
     let chatter_ke = CHATTER_TOPIC.to_key_expr().unwrap();
@@ -389,18 +396,25 @@ async fn tx_loop<W: embedded_io_async::Write>(
     loop {
         match with_timeout(keepalive_dur, PUB_CHANNEL.receive()).await {
             Ok(cdr_payload) => {
-                // Encode frame header + Push/Put with the CDR payload
+                // Encode frame header + Push/Put with the rmw_zenoh_cpp attachment
                 let mut pos = match codec::encode_frame_header(tx_buf, *sn, true) {
                     Ok(n) => n,
                     Err(_) => return,
                 };
                 *sn = sn.wrapping_add(1);
 
-                pos += match codec::encode_push_put(
+                let seq = *pub_sn;
+                *pub_sn = pub_sn.wrapping_add(1);
+                let timestamp_ns =
+                    (Instant::now().as_micros() as i64).saturating_mul(1000);
+
+                pos += match codec::encode_push_put_with_attachment(
                     &mut tx_buf[pos..],
                     chatter_ke.as_str(),
-                    0,
                     &cdr_payload,
+                    seq,
+                    timestamp_ns,
+                    &gid,
                 ) {
                     Ok(n) => n,
                     Err(_) => return,

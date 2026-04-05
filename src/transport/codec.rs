@@ -548,6 +548,7 @@ pub fn encode_push_put_with_attachment(
     // Attachment extension: ZExtZBuf, ID=4, no more extensions
     // ext_header bits: [7]=has_more=0, [6:5]=ZBuf=0b10, [4:0]=id=0x04 → 0b01000100 = 0x44
     const ATTACHMENT_EXT_HEADER: u8 = 0x44;
+    /// Total attachment payload size: 8 (seq_num) + 8 (timestamp_ns) + 1 (gid_len) + 16 (gid).
     const ATTACHMENT_LEN: usize = 33;
 
     if pos >= buf.len() {
