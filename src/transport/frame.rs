@@ -11,6 +11,9 @@ pub const DEFAULT_BATCH_SIZE: usize = 8192;
 /// Write a length-prefixed frame to the transport.
 ///
 /// Format: `[u16 LE length][payload]`
+///
+/// Flushes after writing to ensure data is sent promptly, which is important
+/// for embedded TCP stacks that may buffer output.
 pub async fn write_frame<W: Write>(writer: &mut W, payload: &[u8]) -> Result<(), TransportError> {
     let len = payload.len();
     if len > u16::MAX as usize {
@@ -25,6 +28,7 @@ pub async fn write_frame<W: Write>(writer: &mut W, payload: &[u8]) -> Result<(),
         .write_all(payload)
         .await
         .map_err(|_| TransportError::Io)?;
+    writer.flush().await.map_err(|_| TransportError::Io)?;
     Ok(())
 }
 
