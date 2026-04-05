@@ -1,0 +1,50 @@
+[package]
+name = "esp32c3-wifi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Run with:
+#   cd examples/esp32c3_wifi
+#   cargo run --release
+#
+# Probe-rs must be connected to ESP32-C3 JTAG pins (GPIO4=TCK, GPIO5=TDI, GPIO6=TDO, GPIO7=TMS).
+# SSID and password are entered via the probe-rs RTT terminal.
+
+[dependencies]
+# Embassy async executor (must match esp-rtos 0.2.0 constraint: ^0.9.0)
+embassy-executor = "0.9"
+embassy-net = { version = "0.7", features = [
+    "tcp",
+    "dhcpv4",
+    "medium-ethernet",
+] }
+embassy-sync = "0.6"
+embassy-time = "0.5"
+
+# Espressif HAL + RTOS + radio
+esp-alloc = "0.9"
+esp-bootloader-esp-idf = { version = "0.4", features = ["esp32c3"] }
+esp-hal = { version = "1.0", features = ["esp32c3", "unstable"] }
+esp-rtos = { version = "0.2", features = ["esp32c3", "esp-radio", "embassy"] }
+esp-radio = { version = "0.17", features = ["esp32c3", "wifi"] }
+
+# Static storage helpers
+static_cell = "2"
+
+# RTT terminal I/O via probe-rs
+rtt-target = "0.6"
+
+[profile.dev]
+codegen-units = 1
+debug = true
+debug-assertions = true
+opt-level = 2           # opt-level >= 2 required for WiFi stack stability
+
+[profile.release]
+codegen-units = 1
+debug = true
+debug-assertions = false
+lto = "fat"
+opt-level = 3
+overflow-checks = false

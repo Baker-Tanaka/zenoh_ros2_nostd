@@ -101,3 +101,14 @@ docker compose down
   - `type_name` はDDS慣例: `pkg::msg::dds_::TypeName_`
 - **CDR**: Little Endian固定、encapsulation header `[0x00, 0x01, 0x00, 0x00]`
 - **テストは `#[cfg(test)] mod tests` で各ファイル末尾に配置**
+
+## ESP32-C3 実装 (examples/esp32c3_wifi)
+
+ESP32-C3ターゲットのコードを書く際は `.github/instructions/esp32c3-rust.instructions.md` を参照すること。主な要点:
+
+- `esp_bootloader_esp_idf::esp_app_desc!()` を `#![no_main]` の直後に必ず記述（probe-rs書き込みに必須）
+- 初期化順序: RTT → HAL → Heap → `esp_rtos::start()` → esp-radio の順を守る
+- `embassy-executor` に `arch-*` featureを付けない（`esp-rtos`がexecutorを提供）
+- `connect_async()` は常に `embassy_time::with_timeout()` でラップする（WiFiイベントが来ない場合ハング）
+- ビルドプロファイルの `dev` でも `opt-level = 2` 必須（WiFiスタックが不安定になるため）
+- Wi-Fi認証情報は `build.rs` + `wifi_config.json` パターンでコンパイル時に埋め込む（ソースへの直書き禁止）

@@ -24,6 +24,26 @@
                 "RUST_LOG": "info"
             },
             "consoleLogLevel": "Info"
+        },
+        {
+            "preLaunchTask": "esp32c3: build (release)",
+            "type": "probe-rs-debug",
+            "request": "launch",
+            "name": "ESP32-C3 Wi-Fi demo",
+            "server": "host.docker.internal:50001",
+            "chip": "esp32c3",
+            "flashingConfig": {
+                "flashingEnabled": true,
+                "haltAfterReset": false,
+            },
+            "coreConfigs": [
+                {
+                    "coreIndex": 0,
+                    "programBinary": "${env:LOCAL_WORKSPACE_FOLDER}/examples/esp32c3_wifi/target/riscv32imc-unknown-none-elf/release/esp32c3-wifi",
+                    "rttEnabled": true,
+                }
+            ],
+            "consoleLogLevel": "Info"
         }
     ]
 }

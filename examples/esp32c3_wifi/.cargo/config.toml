@@ -1,0 +1,26 @@
+[build]
+target = "riscv32imc-unknown-none-elf"
+
+# Build alloc + core from source (required because esp-radio uses alloc internally)
+[unstable]
+build-std = ["alloc", "core", "compiler_builtins"]
+
+[target.riscv32imc-unknown-none-elf]
+# Flash and RTT are handled via VS Code launch.json ("ESP32-C3 Wi-Fi demo"),
+# which connects to the probe-rs DAP server running on the host OS
+# (host.docker.internal:50001).  cargo run is not used in this devcontainer
+# setup because probe-rs is not available inside the container.
+# runner = "probe-rs run --chip esp32c3"
+
+rustflags = [
+    # esp-riscv-rt linker script (provided by esp-hal / esp-riscv-rt transitively)
+    "-C",
+    "link-arg=-Tlinkall.x",
+    # Frame pointers improve backtraces shown by probe-rs / defmt-rtt
+    "-C",
+    "force-frame-pointers",
+]
+
+[env]
+# Set log level for internal esp-radio / esp-hal logging (info, debug, trace, warn, error)
+ESP_LOG = "info"
