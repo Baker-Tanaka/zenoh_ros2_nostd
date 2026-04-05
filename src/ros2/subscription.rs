@@ -1,0 +1,103 @@
+//! Typed ROS2 topic subscription.
+//!
+//! [`Subscription`] is designed to be placed in a `static` so any async task
+//! can call [`Subscription::try_recv`] or [`Subscription::recv`] without
+//! holding a session reference.  The Zenoh task pushes incoming payloads into
+//! the subscription's internal queue via the [`SubscriptionDispatch`] trait
+//! inside [`Node::spin`].
+//!
+//! # Usage
+//! ```rust,ignore
+//! use zenoh_ros2_nostd::ros2::Subscription;
+//!
+//! static CHATTER_SUB: Subscription<StringMsg, 144, 4> = Subscription::new();
+//!
+//! // Register with the node to start receiving:
+//! node.subscribe(CHATTER_TOPIC, &CHATTER_SUB).await?;
+//!
+//! // From any async task:
+//! while let Some(result) = CHATTER_SUB.try_recv() {
+//!     let msg = result?;
+//! }
+//! ```
+
+use core::marker::PhantomData;
+
+use serde::Deserialize;
+
+use crate::cdr;
+use crate::error::Error;
+use crate::session::subscriber::Subscriber;
+
+// ── SubscriptionDispatch — object-safe trait for Node routing ────────────────
+
+/// Object-safe trait implemented by [`Subscription`].
+///
+/// [`Node`](super::node::Node) stores `&'static dyn SubscriptionDispatch`
+/// references in its routing table and calls [`push_raw`](Self::push_raw)
+/// when an incoming message key matches the registered key ID.
+pub trait SubscriptionDispatch: Sync {
+    /// Push a raw CDR payload (with 4-byte encapsulation header) into the
+    /// subscription's internal queue for later retrieval by the application.
+    fn push_raw(&self, payload: &[u8]);
+}
+
+// ── Subscription ──────────────────────────────────────────────────────────────
+
+/// A typed ROS2 topic subscription, suitable for use as a `static`.
+///
+/// - `M`        — message type (must implement [`serde::Deserialize`])
+/// - `MSG_SIZE` — maximum raw CDR payload size per message (bytes)
+/// - `QUEUE`    — number of received messages buffered
+///
+/// # Example
+/// ```rust,ignore
+/// static SUB: Subscription<StringMsg, 144, 4> = Subscription::new();
+/// ```
+pub struct Subscription<M, const MSG_SIZE: usize, const QUEUE: usize> {
+    inner: Subscriber<MSG_SIZE, QUEUE>,
+    _phantom: PhantomData<fn() -> M>,
+}
+
+impl<M, const MSG_SIZE: usize, const QUEUE: usize> Subscription<M, MSG_SIZE, QUEUE>
+where
+    M: for<'de> Deserialize<'de>,
+{
+    /// Create a new subscription.  Safe to call as a `static` initializer.
+    pub const fn new() -> Self {
+        Self {
+            inner: Subscriber::new(),
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Await the next message from the topic, deserializing from CDR.
+    ///
+    /// Yields until a message is available.
+    pub async fn recv(&self) -> Result<M, Error> {
+        let raw = self.inner.recv().await;
+        cdr::deserialize_with_header::<M>(&raw.payload)
+            .map(|(m, _)| m)
+            .map_err(Error::Cdr)
+    }
+
+    /// Try to receive the next message without blocking.
+    ///
+    /// Returns `None` if the queue is empty.
+    pub fn try_recv(&self) -> Option<Result<M, Error>> {
+        let raw = self.inner.try_recv()?;
+        Some(
+            cdr::deserialize_with_header::<M>(&raw.payload)
+                .map(|(m, _)| m)
+                .map_err(Error::Cdr),
+        )
+    }
+}
+
+impl<M, const MSG_SIZE: usize, const QUEUE: usize> SubscriptionDispatch
+    for Subscription<M, MSG_SIZE, QUEUE>
+{
+    fn push_raw(&self, payload: &[u8]) {
+        self.inner.push(payload);
+    }
+}

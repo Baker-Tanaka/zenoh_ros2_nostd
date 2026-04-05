@@ -28,10 +28,14 @@ pub struct ZenohId {
 
 impl ZenohId {
     /// Create a ZenohId from a byte slice (up to 16 bytes).
-    pub fn from_bytes(data: &[u8]) -> Self {
-        let len = data.len().min(16);
+    pub const fn from_bytes(data: &[u8]) -> Self {
+        let len = if data.len() > 16 { 16 } else { data.len() };
         let mut bytes = [0u8; 16];
-        bytes[..len].copy_from_slice(&data[..len]);
+        let mut i = 0;
+        while i < len {
+            bytes[i] = data[i];
+            i += 1;
+        }
         Self {
             bytes,
             len: len as u8,

@@ -15,7 +15,7 @@ pub const MAX_KEY_EXPR_LEN: usize = 256;
 /// A ROS2 topic key expression builder.
 ///
 /// Generates zenoh key expressions compatible with rmw_zenoh_cpp.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct TopicKeyExpr {
     /// ROS2 domain ID (default: 0).
     pub domain_id: u32,

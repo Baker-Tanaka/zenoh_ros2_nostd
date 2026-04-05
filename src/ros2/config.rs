@@ -4,6 +4,7 @@
 //! settings (domain ID, lease time).  Construct one per device and share it
 //! via a `static` or by reference.
 
+use crate::ros2::node::NodeBuilder;
 use crate::transport::protocol::ZenohId;
 
 /// Configuration for a ROS2-over-Zenoh embedded session.
@@ -52,6 +53,18 @@ impl ZenohRos2Config {
     pub const fn with_lease_ms(mut self, ms: u64) -> Self {
         self.lease_ms = ms;
         self
+    }
+
+    /// Create a [`NodeBuilder`] pre-configured with this config's ZID and domain ID.
+    ///
+    /// ```rust,ignore
+    /// let node = cfg.node_builder()
+    ///     .name("talker")
+    ///     .open(socket)
+    ///     .await?;
+    /// ```
+    pub fn node_builder(&self) -> NodeBuilder {
+        NodeBuilder::new(self.zid).domain_id(self.domain_id)
     }
 }
 
