@@ -38,6 +38,14 @@ impl<const MSG_SIZE: usize, const QUEUE: usize> Subscriber<MSG_SIZE, QUEUE> {
         self.channel.try_receive().ok()
     }
 
+    /// Drain and discard all pending messages from the channel.
+    ///
+    /// Useful after a session reconnect to prevent stale messages from being
+    /// delivered to the application.
+    pub fn clear(&self) {
+        while self.channel.try_receive().is_ok() {}
+    }
+
     /// Push a message into the subscriber's channel (called by the session rx loop).
     pub fn push(&self, payload: &[u8]) {
         let mut msg_payload = Vec::new();

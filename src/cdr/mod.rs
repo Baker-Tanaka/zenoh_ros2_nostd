@@ -24,6 +24,25 @@ use serde::{Deserialize, Serialize};
 /// CDR LE encapsulation header (4 bytes).
 pub const CDR_LE_HEADER: [u8; 4] = [0x00, 0x01, 0x00, 0x00];
 
+/// Calculate the minimum CDR buffer capacity for a struct with a single
+/// `string data` field (e.g., `std_msgs/String`) given the maximum string length.
+///
+/// CDR string encoding: 4 B encapsulation header + 4 B length field +
+/// `max_str_len` data bytes + 1 B null terminator.
+///
+/// # Example
+/// ```rust,ignore
+/// const CDR_BUF_CAP: usize = cdr::cdr_cap_for_string(128); // = 137
+/// static CHATTER_PUB: Publisher<StringMsg, { cdr::cdr_cap_for_string(128) }, 4> =
+///     Publisher::new(CHATTER_TOPIC);
+/// ```
+pub const fn cdr_cap_for_string(max_str_len: usize) -> usize {
+    4 // CDR encapsulation header
+    + 4 // string length (u32 LE)
+    + max_str_len // UTF-8 data bytes
+    + 1 // null terminator
+}
+
 /// Serialize a value to CDR LE into the provided buffer.
 ///
 /// Returns the number of bytes written.

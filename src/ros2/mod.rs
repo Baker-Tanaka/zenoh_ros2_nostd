@@ -1,14 +1,17 @@
 //! ROS2 adaptation layer — key expressions, QoS, nodes, and topic pub/sub.
 
+pub mod config;
 pub mod keyexpr;
 pub mod liveliness;
+pub mod msg;
 pub mod node;
+pub mod publisher;
 pub mod qos;
-pub mod topic_publisher;
-pub mod topic_subscriber;
+pub mod subscription;
 
+pub use config::ZenohRos2Config;
 pub use keyexpr::TopicKeyExpr;
-pub use node::Node;
+pub use node::{Node, NodeBuilder};
+pub use publisher::{Publisher, PublisherDrain};
 pub use qos::{Durability, History, Qos, Reliability};
-pub use topic_publisher::TopicPublisher;
-pub use topic_subscriber::TopicSubscriber;
+pub use subscription::{Subscription, SubscriptionDispatch};

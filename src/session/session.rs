@@ -135,6 +135,46 @@ impl<T: Read + Write, const TX_BUF: usize, const RX_BUF: usize> Session<T, TX_BU
         Ok(key_id)
     }
 
+    /// Publish raw payload with rmw_zenoh_cpp publisher attachment.
+    ///
+    /// The attachment includes the sequence number, timestamp, and publisher GID,
+    /// which allows `rmw_zenoh_cpp` subscribers to identify the source and track ordering.
+    ///
+    /// - `seq_num`: monotonically increasing sequence number per publisher.
+    /// - `timestamp_ns`: nanoseconds since UNIX epoch; pass `0` if RTC is unavailable.
+    /// - `gid`: publisher identity (typically the session's ZenohId).
+    pub async fn put_with_attachment(
+        &self,
+        key_expr: &str,
+        payload: &[u8],
+        seq_num: i64,
+        timestamp_ns: i64,
+        gid: &ZenohId,
+    ) -> Result<(), Error> {
+        let mut tx_buf = [0u8; TX_BUF];
+
+        let mut pos = 0;
+        let sn = self.next_sn_reliable().await;
+        pos +=
+            codec::encode_frame_header(&mut tx_buf[pos..], sn, true).map_err(Error::Transport)?;
+        pos += codec::encode_push_put_with_attachment(
+            &mut tx_buf[pos..],
+            key_expr,
+            payload,
+            seq_num,
+            timestamp_ns,
+            gid,
+        )
+        .map_err(Error::Transport)?;
+
+        let mut link = self.link.lock().await;
+        frame::write_frame(&mut *link, &tx_buf[..pos])
+            .await
+            .map_err(Error::Transport)?;
+
+        Ok(())
+    }
+
     /// Publish raw payload to a key expression (inline, not pre-declared).
     pub async fn put(&self, key_expr: &str, payload: &[u8]) -> Result<(), Error> {
         let mut tx_buf = [0u8; TX_BUF];

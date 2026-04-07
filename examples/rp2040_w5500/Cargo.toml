@@ -1,0 +1,81 @@
+[package]
+name = "rp2040-w5500"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Run with:
+#   cd examples/rp2040_w5500
+#   cp config.json.example config.json      # edit router_addr
+#   cargo run --release
+
+[dependencies]
+# Embassy async runtime — RP2040 (Cortex-M0+) platform
+# executor-thread only — executor-interrupt is not used.
+embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
+
+# RP2040 HAL
+embassy-rp = { version = "0.10", features = [
+    "rp2040",
+    "unstable-pac",
+    "time-driver",
+    "critical-section-impl",
+] }
+
+# TCP/IP networking stack
+embassy-net = { version = "0.7", features = [
+    "tcp",
+    "dhcpv4",
+    "medium-ethernet",
+] }
+
+# W5500 SPI Ethernet driver
+embassy-net-wiznet = "0.3"
+
+# Async timing
+embassy-time = "0.5"
+
+# Shared SPI bus helper (wraps Spi + CS into one peripheral)
+embedded-hal-bus = { version = "0.2", features = ["async"] }
+
+# Async I/O trait implementations — required for NodeBuilder::open()
+embedded-io-async = "0.6"
+
+# Serialization for ROS2 messages
+heapless = { version = "0.8", features = ["serde"] }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+
+# Static storage helpers
+static_cell = "2"
+
+# Embedded logging via RTT (probe-rs)
+defmt = "1.0"
+defmt-rtt = "1.0"
+panic-probe = { version = "0.3", features = ["print-defmt"] }
+
+# Cortex-M startup and runtime
+cortex-m = { version = "0.7", features = ["inline-asm"] }
+cortex-m-rt = "0.7"
+
+# Atomic operations emulation for Cortex-M0+ (thumbv6m does not have native CAS).
+# Required by embedded-hal-bus and other crates that use atomics.
+# unsafe-assume-single-core: safe for RP2040 main core (single-threaded async).
+portable-atomic = { version = "1", features = ["unsafe-assume-single-core"] }
+
+# zenoh-ros2-nostd library
+zenoh-ros2-nostd = { path = "../..", default-features = false, features = ["defmt"] }
+
+[profile.dev]
+codegen-units = 1
+debug = true
+debug-assertions = true
+opt-level = "z"        # -Oz: size-optimised; safe to use for dev
+overflow-checks = true
+
+[profile.release]
+codegen-units = 1
+debug = true           # retain debug symbols for probe-rs stack traces
+debug-assertions = false
+lto = "fat"
+opt-level = "z"
+overflow-checks = false

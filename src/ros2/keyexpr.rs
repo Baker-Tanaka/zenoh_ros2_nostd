@@ -15,7 +15,7 @@ pub const MAX_KEY_EXPR_LEN: usize = 256;
 /// A ROS2 topic key expression builder.
 ///
 /// Generates zenoh key expressions compatible with rmw_zenoh_cpp.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct TopicKeyExpr {
     /// ROS2 domain ID (default: 0).
     pub domain_id: u32,
@@ -130,13 +130,13 @@ mod tests {
         let ke = TopicKeyExpr::new(
             0,
             "chatter",
-            "std_msgs::msg::String",
-            "RIHS01_abcdef1234567890",
+            "std_msgs::msg::dds_::String_",
+            "RIHS01_df668c740482bbd48fb39d76a70dfd4bd59db1288021743503259e948f6b1a18",
         );
         let result = ke.to_key_expr().unwrap();
         assert_eq!(
             result.as_str(),
-            "0/chatter/std_msgs::msg::String/RIHS01_abcdef1234567890"
+            "0/chatter/std_msgs::msg::dds_::String_/RIHS01_df668c740482bbd48fb39d76a70dfd4bd59db1288021743503259e948f6b1a18"
         );
     }
 
@@ -145,13 +145,13 @@ mod tests {
         let ke = TopicKeyExpr::new(
             0,
             "/cmd_vel",
-            "geometry_msgs::msg::Twist",
+            "geometry_msgs::msg::dds_::Twist_",
             "RIHS01_xyz",
         );
         let result = ke.to_key_expr().unwrap();
         assert_eq!(
             result.as_str(),
-            "0/cmd_vel/geometry_msgs::msg::Twist/RIHS01_xyz"
+            "0/cmd_vel/geometry_msgs::msg::dds_::Twist_/RIHS01_xyz"
         );
     }
 
@@ -160,13 +160,13 @@ mod tests {
         let ke = TopicKeyExpr::new(
             42,
             "scan",
-            "sensor_msgs::msg::LaserScan",
+            "sensor_msgs::msg::dds_::LaserScan_",
             "RIHS01_hash",
         );
         let result = ke.to_key_expr().unwrap();
         assert_eq!(
             result.as_str(),
-            "42/scan/sensor_msgs::msg::LaserScan/RIHS01_hash"
+            "42/scan/sensor_msgs::msg::dds_::LaserScan_/RIHS01_hash"
         );
     }
 
@@ -175,13 +175,13 @@ mod tests {
         let result = build_topic_key_expr(
             0,
             "joint_states",
-            "sensor_msgs::msg::JointState",
+            "sensor_msgs::msg::dds_::JointState_",
             "RIHS01_abc",
         )
         .unwrap();
         assert_eq!(
             result.as_str(),
-            "0/joint_states/sensor_msgs::msg::JointState/RIHS01_abc"
+            "0/joint_states/sensor_msgs::msg::dds_::JointState_/RIHS01_abc"
         );
     }
 }
