@@ -108,6 +108,13 @@ static CHATTER_SUB: Subscription<StringMsg, CDR_BUF_CAP, 4> = Subscription::new(
 static STACK_RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
 static WIZNET_STATE: StaticCell<WiznetState<8, 8>> = StaticCell::new();
 
+// TCP buffers as statics — prevents stack overflow in zenoh_task's reconnection loop.
+// On RP2040, each embassy task has a fixed stack (typ. 4–16 KB).  Placing 12 KB of
+// buffers as locals that are live across `.await` points would exceed that budget.
+static TCP_RX_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
+static TCP_TX_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
+static ZENOH_RX_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
+
 // ── Type aliases to avoid long names in task signatures ──────────────────────
 
 /// Async SPI bus on SPI0 with DMA.
@@ -154,8 +161,10 @@ async fn main(spawner: Spawner) {
     // `async` feature of embedded-hal-bus enables the embedded_hal_async::spi::SpiDevice impl.
     let spi_device: MySpiDevice = ExclusiveDevice::new_no_delay(spi, cs).unwrap();
 
-    // Use a locally-administered unicast MAC.  Replace with a unique value per board.
-    let mac_addr = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
+    // ⚠️ Use a unique MAC per board!  Identical MACs on the same network cause
+    // ARP conflicts and intermittent connectivity.  Derive from RP2040's unique ID
+    // (accessible via the QSPI `FLASH_RUID_CMD` or the 64-bit UID at address 0x40130084).
+    let mac_addr = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01]; // REPLACE with board-unique value
 
     let wiznet_state = WIZNET_STATE.init(WiznetState::<8, 8>::new());
 
@@ -171,9 +180,10 @@ async fn main(spawner: Spawner) {
     .await
     .expect("W5500 init failed");
 
-    // Seed from a fixed constant.  Replace with hardware RNG (e.g. rosc + timer)
-    // for production to avoid MAC / sequence-number collisions across reboots.
-    let seed: u64 = 0x1234_5678_9abc_def0;
+    // ⚠️ Fixed seed — predictable TCP sequence numbers and port choices.
+    // For production, derive entropy from RP2040's ring oscillator (ROSC) or
+    // chip UID to prevent collisions when multiple identical firmware images run.
+    let seed: u64 = 0x1234_5678_9abc_def0; // REPLACE with hardware-derived entropy
 
     let (stack, net_runner) = embassy_net::new(
         net_device,
@@ -221,14 +231,21 @@ async fn zenoh_task(stack: Stack<'static>) {
     let cfg = AppConfig::new();
     let mut reconnect = ReconnectPolicy::default_policy();
 
+    // Allocate TCP and RX buffers ONCE, outside the reconnection loop.
+    // Placing 4 KB arrays inside the loop body as locals that are live across
+    // .await points would bloat the async state machine and risk stack overflow.
+    // StaticCell ensures single-initialization; after TcpSocket/Node are dropped
+    // at each loop iteration's end, the borrows release and buffers are reused.
+    let tcp_rx = TCP_RX_BUF.init([0u8; 4096]);
+    let tcp_tx = TCP_TX_BUF.init([0u8; 4096]);
+    let rx_buf = ZENOH_RX_BUF.init([0u8; 4096]);
+
     loop {
         // ── Wait for DHCP ────────────────────────────────────────────────────
         wait_for_dhcp(stack).await;
 
         // ── TCP connect to Zenoh router ──────────────────────────────────────
-        let mut tcp_rx = [0u8; 4096];
-        let mut tcp_tx = [0u8; 4096];
-        let mut socket = TcpSocket::new(stack, &mut tcp_rx, &mut tcp_tx);
+        let mut socket = TcpSocket::new(stack, tcp_rx, tcp_tx);
         socket.set_timeout(Some(Duration::from_secs(30)));
 
         info!("[zenoh] TCP connecting...");
@@ -283,8 +300,7 @@ async fn zenoh_task(stack: Stack<'static>) {
         info!("[zenoh] Node '{}' ready.", node.node_name());
 
         // ── Session loop — returns only when the connection drops ────────────
-        let mut rx_buf = [0u8; 4096];
-        node.spin(&mut rx_buf).await;
+        node.spin(rx_buf).await;
 
         warn!("[zenoh] Session ended — reconnecting.");
         reconnect.wait_and_advance().await;

@@ -11,7 +11,8 @@ publish = false
 
 [dependencies]
 # Embassy async runtime — RP2040 (Cortex-M0+) platform
-embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread", "executor-interrupt"] }
+# executor-thread only — executor-interrupt is not used.
+embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
 
 # RP2040 HAL
 embassy-rp = { version = "0.10", features = [

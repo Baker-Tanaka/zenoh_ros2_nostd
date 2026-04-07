@@ -21,11 +21,13 @@ use zenoh_ros2_nostd::transport::protocol::ZenohId;
 /// Router address embedded by `build.rs` from `config.json`.
 const ZENOH_ROUTER_ADDR_STR: &str = env!("ZENOH_ROUTER_ADDR");
 
-/// Device ZenohId — change per device to avoid network collisions.
+/// Device ZenohId — **must be unique per board**.
 ///
-/// Use the board's unique UID (RP2040 has a 64-bit chip ID at address 0x40130084)
-/// or any other unique byte sequence.  Keep to ≤ 16 bytes.
-const DEVICE_ZID_BYTES: [u8; 8] = [0xC0, 0xFF, 0xEE, 0x00, 0x02, 0x04, 0x00, 0x01];
+/// ⚠️ Using the same ZenohId on two devices causes routing conflicts in the
+/// Zenoh network.  Replace with the board's unique UID:
+/// - RP2040 chip ID is at address `0x40130084` (64-bit, accessible via QSPI RUID)
+/// - Use the lower 8 bytes as ZenohId to guarantee uniqueness
+const DEVICE_ZID_BYTES: [u8; 8] = [0xC0, 0xFF, 0xEE, 0x00, 0x02, 0x04, 0x00, 0x01]; // REPLACE
 
 // ── Config structs ────────────────────────────────────────────────────────────
 
