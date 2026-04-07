@@ -2,6 +2,12 @@
 
 [![no_std](https://img.shields.io/badge/no__std-compatible-brightgreen)](https://doc.rust-lang.org/reference/names/preludes.html#the-no_std-attribute)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![Development Status](https://img.shields.io/badge/status-early%20development-orange)](https://github.com/Baker-Tanaka/zenoh_ros2_nostd)
+
+> ⚠️ **開発中 (Early Development)**
+>
+> このライブラリは現在積極的に開発中です。API は予告なく破壊的変更される可能性があります。
+> プロダクション環境での使用は推奨しません。フィードバックや Issue の報告は歓迎します。
 
 組み込みMCU向け `no_std` ROS2トピック pub/sub ライブラリ。
 Zenoh プロトコル v9（zenoh 1.x）上で CDR シリアライゼーションを用い、標準の ROS2 ノード（`rmw_zenoh_cpp`）と通信する。
@@ -57,6 +63,20 @@ async fn run(tcp_socket: &mut impl embedded_io_async::ReadWrite) {
     publisher.publish(&msg).await.unwrap();
 }
 ```
+
+## Examples
+
+| Example | ターゲット | 状態 | 説明 |
+|---|---|---|---|
+| [`rp2040_w5500`](examples/rp2040_w5500/) | RP2040 + W5500 Ethernet | ✅ アクティブ | baker link.Dev + W5500 で Docker 上の ROS2 と pub/sub |
+| [`esp32c3_wifi`](examples/esp32c3_wifi/) | ESP32-C3 WiFi | 🗄️ アーカイブ | ESP32-C3 WiFi 接続デモ（現在未動作） |
+
+### ⚠️ esp32c3_wifi — アーカイブ
+
+> このサンプルは現在**動作しない**ことが確認されています。
+> `esp-radio` / `esp-rtos` 依存のバージョン互換性問題により、接続が不安定です。
+> 参考実装として残してありますが、積極的なメンテナンスは行われていません。
+> RP2040 + W5500 の [`rp2040_w5500`](examples/rp2040_w5500/) サンプルを代わりにご利用ください。
 
 ## Architecture
 
