@@ -4,7 +4,7 @@
 //! can call [`Subscription::try_recv`] or [`Subscription::recv`] without
 //! holding a session reference.  The Zenoh task pushes incoming payloads into
 //! the subscription's internal queue via the [`SubscriptionDispatch`] trait
-//! inside [`Node::spin`].
+//! inside [`Node::spin`](super::node::Node::spin).
 //!
 //! # Usage
 //! ```rust,ignore
@@ -107,7 +107,7 @@ where
         self.inner.clear();
     }
 
-    /// Return a `&'static dyn SubscriptionDispatch` suitable for [`Node::subscribe`].
+    /// Return a `&'static dyn SubscriptionDispatch` suitable for [`Node::subscribe`](super::node::Node::subscribe).
     ///
     /// This hides the `as &'static dyn SubscriptionDispatch` boilerplate from the caller.
     ///

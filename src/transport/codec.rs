@@ -50,7 +50,7 @@ pub fn decode_vbyte(buf: &[u8]) -> Result<(u64, usize), TransportError> {
 
 // ====== ZenohId encoding ======
 
-/// Encode a ZenohId: [length: u8][bytes].
+/// Encode a ZenohId: `[length: u8][bytes]`.
 pub fn encode_zenoh_id(buf: &mut [u8], zid: &ZenohId) -> Result<usize, TransportError> {
     let id_bytes = zid.as_bytes();
     if buf.len() < 1 + id_bytes.len() {
@@ -76,7 +76,7 @@ pub fn decode_zenoh_id(buf: &[u8]) -> Result<(ZenohId, usize), TransportError> {
 
 // ====== Slice / byte array encoding ======
 
-/// Encode a byte slice as [vbyte length][bytes].
+/// Encode a byte slice as `[vbyte length][bytes]`.
 pub fn encode_slice(buf: &mut [u8], data: &[u8]) -> Result<usize, TransportError> {
     let mut pos = encode_vbyte(buf, data.len() as u64)?;
     if pos + data.len() > buf.len() {
@@ -87,7 +87,7 @@ pub fn encode_slice(buf: &mut [u8], data: &[u8]) -> Result<usize, TransportError
     Ok(pos)
 }
 
-/// Decode a byte slice from [vbyte length][bytes].
+/// Decode a byte slice from `[vbyte length][bytes]`.
 /// Returns (slice, bytes_consumed).
 pub fn decode_slice(buf: &[u8]) -> Result<(&[u8], usize), TransportError> {
     let (len, hdr) = decode_vbyte(buf)?;
@@ -511,7 +511,7 @@ pub fn encode_push_put(
 /// - 16 bytes: publisher GID (`ZenohId` zero-padded to 16 bytes)
 ///
 /// Extension wire encoding:
-/// - `ext_header = 0x44` — ZExtZBuf (encoding bits[6:5]=0b10), ID=4, no-more
+/// - `ext_header = 0x44` — ZExtZBuf (encoding bits\[6:5\]=0b10), ID=4, no-more
 /// - body = `[VByte(33)][33 attachment bytes]`
 pub fn encode_push_put_with_attachment(
     buf: &mut [u8],

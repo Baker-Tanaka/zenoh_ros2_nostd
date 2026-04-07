@@ -3,7 +3,7 @@
 //! [`Publisher`] is designed to be placed in a `static` so any async task can
 //! call [`Publisher::send`] without holding a session reference.  The Zenoh
 //! task drains queued payloads via the [`PublisherDrain`] trait inside
-//! [`Node::spin`].
+//! [`Node::spin`](super::node::Node::spin).
 //!
 //! # Usage
 //! ```rust,ignore
@@ -46,7 +46,7 @@ pub struct CdrPayload<const N: usize> {
 /// Object-safe trait implemented by [`Publisher`].
 ///
 /// [`Node`](super::node::Node) uses this trait to drain pending CDR payloads
-/// from each registered publisher during [`Node::spin`].
+/// from each registered publisher during [`Node::spin`](super::node::Node::spin).
 ///
 /// # Safety
 /// Implementations must be `Sync` (they are placed in `static` globals).
@@ -160,7 +160,7 @@ impl<M: Serialize, const CDR_CAP: usize, const QUEUE: usize> Publisher<M, CDR_CA
             .map_err(|_| Error::BufferFull)
     }
 
-    /// Return a `&'static dyn PublisherDrain` suitable for [`Node::register_publisher`].
+    /// Return a `&'static dyn PublisherDrain` suitable for [`Node::register_publisher`](super::node::Node::register_publisher).
     ///
     /// This hides the `as &'static dyn PublisherDrain` boilerplate from the caller.
     ///
