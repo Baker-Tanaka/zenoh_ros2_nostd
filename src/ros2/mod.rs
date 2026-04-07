@@ -3,6 +3,7 @@
 pub mod config;
 pub mod keyexpr;
 pub mod liveliness;
+pub mod msg;
 pub mod node;
 pub mod publisher;
 pub mod qos;

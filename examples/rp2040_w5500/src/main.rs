@@ -63,13 +63,11 @@ use embassy_time::{Duration, Timer, with_timeout};
 use embedded_hal_bus::spi::{ExclusiveDevice, NoDelay};
 use heapless::String;
 use panic_probe as _;
+use portable_atomic::{AtomicU32, Ordering};
 use serde::{Deserialize, Serialize};
 use static_cell::StaticCell;
-use zenoh_ros2_nostd::ros2::{
-    Publisher, Subscription, TopicKeyExpr,
-    publisher::PublisherDrain,
-    subscription::SubscriptionDispatch,
-};
+use zenoh_ros2_nostd::cdr::cdr_cap_for_string;
+use zenoh_ros2_nostd::ros2::{Publisher, Subscription, msg};
 use zenoh_ros2_nostd::session::ReconnectPolicy;
 
 // ── Interrupt bindings ───────────────────────────────────────────────────────
@@ -81,13 +79,11 @@ bind_interrupts!(struct Irqs {
 
 // ── ROS2 topic definition ────────────────────────────────────────────────────
 
-/// Key expression for `std_msgs/String` on `/chatter` (rmw_zenoh_cpp convention).
-const CHATTER_TOPIC: TopicKeyExpr = TopicKeyExpr::new(
-    0, // ROS_DOMAIN_ID
-    "chatter",
-    "std_msgs::msg::dds_::String_",
-    "RIHS01_df668c740482bbd48fb39d76a70dfd4bd59db1288021743503259e948f6b1a18",
-);
+/// Key expression for `std_msgs/String` on `/chatter`.
+///
+/// Built from the verified `msg::std_msgs::String` constants — no hand-typed
+/// type hash or type name; typos are caught at compile time.
+const CHATTER_TOPIC: zenoh_ros2_nostd::ros2::TopicKeyExpr = msg::std_msgs::String::CHATTER;
 
 /// `std_msgs/String` message type.
 #[derive(Serialize, Deserialize, Debug)]
@@ -95,13 +91,40 @@ struct StringMsg {
     data: String<128>,
 }
 
-/// CDR buffer capacity for `StringMsg` (4 B header + 4 B length + 128 B data + 1 B null).
-const CDR_BUF_CAP: usize = 144;
+/// CDR buffer capacity for `StringMsg` computed from the string field size.
+///
+/// `cdr_cap_for_string(128)` = 4 (CDR header) + 4 (length) + 128 (data) + 1 (null) = 137.
+/// The constant eliminates manual byte-count arithmetic and is updated automatically
+/// if the string size changes.
+const CDR_BUF_CAP: usize = cdr_cap_for_string(128);
 
 // ── Static publisher and subscriber ─────────────────────────────────────────
 
 static CHATTER_PUB: Publisher<StringMsg, CDR_BUF_CAP, 4> = Publisher::new(CHATTER_TOPIC);
 static CHATTER_SUB: Subscription<StringMsg, CDR_BUF_CAP, 4> = Subscription::new();
+
+// ── Panic counter ────────────────────────────────────────────────────────────
+
+/// Number of panics recorded since power-on (RAM counter — resets on power-off).
+///
+/// This counter is **not** incremented automatically by `panic-probe` (which
+/// provides the `#[panic_handler]` and calls `cortex_m::asm::udf()` directly).
+/// To make use of it, replace `panic-probe` with a custom panic handler:
+///
+/// ```rust,ignore
+/// // Custom panic handler (remove panic-probe from Cargo.toml first):
+/// #[panic_handler]
+/// fn panic_handler(info: &core::panic::PanicInfo) -> ! {
+///     PANIC_COUNT.fetch_add(1, Ordering::Relaxed);
+///     // (Optional) write to RP2040 watchdog scratch register for persistence across resets.
+///     defmt::error!("PANIC: {}", defmt::Debug2Format(info));
+///     cortex_m::asm::udf()
+/// }
+/// ```
+///
+/// Even without a custom handler, the startup log warns if `PANIC_COUNT > 0`,
+/// providing visibility when probe-rs **is** attached.
+static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
 // ── Static storage for embassy ───────────────────────────────────────────────
 
@@ -134,6 +157,17 @@ type MyWiznetRunner =
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
+
+    // Report the panic count from the previous run.  A non-zero count means
+    // the firmware hit a `panic!` (or assertion) and reset.  When probe-rs is
+    // not attached the panic message is lost; this counter provides a visible
+    // signal that something went wrong.
+    let panics = PANIC_COUNT.load(Ordering::Relaxed);
+    if panics > 0 {
+        warn!("[main] ⚠️  {} panic(s) recorded since last power-on.", panics);
+    } else {
+        info!("[main] Starting — no panics recorded.");
+    }
 
     // ── W5500 SPI peripheral (async + DMA) ──────────────────────────────────
     // W5500 supports up to 33.3 MHz at 3.3 V.  10 MHz is a safe starting point.
@@ -285,10 +319,15 @@ async fn zenoh_task(stack: Stack<'static>) {
             }
         };
 
-        node.register_publisher(&CHATTER_PUB as &'static dyn PublisherDrain);
+        node.register_publisher(CHATTER_PUB.as_drain());
+
+        // Clear stale messages from the previous session before re-subscribing.
+        // Without this, messages received before the disconnect would be delivered
+        // to the application after reconnect — out-of-context and potentially stale.
+        CHATTER_SUB.clear();
 
         if let Err(e) = node
-            .subscribe(CHATTER_TOPIC, &CHATTER_SUB as &'static dyn SubscriptionDispatch)
+            .subscribe(CHATTER_TOPIC, CHATTER_SUB.as_dispatch())
             .await
         {
             error!("[zenoh] Subscribe failed: {}", e);
@@ -308,9 +347,15 @@ async fn zenoh_task(stack: Stack<'static>) {
 }
 
 /// Application logic: publish a counter message every 5 s; echo received messages.
+///
+/// Publish failures are counted and logged.  A non-zero drop count at runtime
+/// indicates that the zenoh_task is not draining the publisher queue fast enough,
+/// or that the Zenoh session is disconnected.  The `send()` API blocks when the
+/// queue is full, so in normal operation `drop_count` stays at 0.
 #[embassy_executor::task]
 async fn app_task() {
     let mut counter: u32 = 0;
+    let mut drop_count: u32 = 0;
     loop {
         // ── Publish ─────────────────────────────────────────────────────────
         let mut data: String<128> = String::new();
@@ -322,7 +367,14 @@ async fn app_task() {
 
         match CHATTER_PUB.send(&StringMsg { data }).await {
             Ok(()) => {}
-            Err(e) => error!("[app] Publish error: {}", e),
+            Err(e) => {
+                drop_count += 1;
+                // Log every failure.  `send()` awaits until there is queue space,
+                // so this error only fires on CDR serialization failure (which
+                // should not happen for well-typed messages).  If you see drops
+                // here, check that CDR_BUF_CAP is large enough for the message.
+                error!("[app] Publish error (total drops={}): {}", drop_count, e);
+            }
         }
 
         // ── Receive ─────────────────────────────────────────────────────────

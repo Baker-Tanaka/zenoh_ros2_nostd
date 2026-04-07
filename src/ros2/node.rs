@@ -192,6 +192,13 @@ impl<T: Read + Write> Node<T> {
     ///
     /// This call does **not** send any wire messages — it only registers the
     /// publisher for draining.
+    ///
+    /// Use [`Publisher::as_drain`](super::Publisher::as_drain) to avoid the
+    /// explicit `as &'static dyn PublisherDrain` cast:
+    ///
+    /// ```rust,ignore
+    /// node.register_publisher(CHATTER_PUB.as_drain());
+    /// ```
     pub fn register_publisher(&mut self, publisher: &'static dyn PublisherDrain) {
         let _ = self.publishers.push(publisher);
     }
@@ -204,6 +211,16 @@ impl<T: Read + Write> Node<T> {
     /// Received payloads are pushed into `sub`'s internal queue; call
     /// [`Subscription::try_recv`](super::Subscription::try_recv) (or `recv`)
     /// from any task to read them.
+    ///
+    /// Use [`Subscription::as_dispatch`](super::Subscription::as_dispatch) to
+    /// avoid the explicit `as &'static dyn SubscriptionDispatch` cast.
+    /// Call [`Subscription::clear`](super::Subscription::clear) **before**
+    /// re-subscribing after reconnect to discard stale messages:
+    ///
+    /// ```rust,ignore
+    /// CHATTER_SUB.clear(); // flush stale messages from last session
+    /// node.subscribe(CHATTER_TOPIC, CHATTER_SUB.as_dispatch()).await?;
+    /// ```
     ///
     /// Returns the key ID assigned to `topic` (useful for diagnostics).
     pub async fn subscribe(

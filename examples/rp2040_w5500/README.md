@@ -71,22 +71,29 @@ main()         — RP2040 / W5500 初期化、embassy executor 起動
 ## SDK の使い方
 
 ```rust
-// 1. static Publisher / Subscription を定義（const fn, no heap）
+// 1. ros2::msg の定義済み定数でトピックを定義（type_hash の手入力不要）
+const CHATTER_TOPIC: TopicKeyExpr = msg::std_msgs::String::CHATTER;
+
+// 2. CDR バッファサイズを cdr_cap_for_string() で計算（手動計算不要）
+const CDR_BUF_CAP: usize = cdr_cap_for_string(128); // = 137
+
+// 3. static Publisher / Subscription を定義（const fn, no heap）
 static CHATTER_PUB: Publisher<StringMsg, CDR_BUF_CAP, 4> = Publisher::new(CHATTER_TOPIC);
 static CHATTER_SUB: Subscription<StringMsg, CDR_BUF_CAP, 4> = Subscription::new();
 
-// 2. NodeBuilder でビルダー設定 → open(transport) でセッション確立
+// 4. NodeBuilder でビルダー設定 → open(transport) でセッション確立
 let mut node = cfg.zenoh.session
     .node_builder()
     .name("rp2040_node")
     .open(socket)           // T: Read + Write — WiFi, Ethernet, USB CDC など何でも可
     .await?;
 
-// 3. 登録と宣言
-node.register_publisher(&CHATTER_PUB as &'static dyn PublisherDrain);
-node.subscribe(CHATTER_TOPIC, &CHATTER_SUB as &'static dyn SubscriptionDispatch).await?;
+// 5. 登録と宣言（as_drain() / as_dispatch() で dyn Trait キャスト不要）
+node.register_publisher(CHATTER_PUB.as_drain());
+CHATTER_SUB.clear(); // 再接続時: 前セッションの古いメッセージをフラッシュ
+node.subscribe(CHATTER_TOPIC, CHATTER_SUB.as_dispatch()).await?;
 
-// 4. セッション駆動（接続断まで返らない）
+// 6. セッション駆動（接続断まで返らない）
 node.spin(&mut rx_buf).await;
 
 // 別タスクから送受信
@@ -100,104 +107,102 @@ while let Some(r) = CHATTER_SUB.try_recv() { ... }
 
 このサンプルの `main.rs` に対するレビューです。SDK 設計の観点から改善すべき点と、組み込みシステムとしてのバグリスクを指摘します。
 
+> **凡例**: ✅ 解決済み / ⚠️ 既知の課題（今後の改善項目）
+
 ### SDK 設計コンセプト: 可読性・使いやすさの問題
 
-#### 1. `&'static dyn Trait` キャストの非直感性
+#### 1. `&'static dyn Trait` キャストの非直感性 ✅ 解決済み
 
+以前のコード:
 ```rust
-// ユーザーが書く必要があるコード
 node.register_publisher(&CHATTER_PUB as &'static dyn PublisherDrain);
 node.subscribe(CHATTER_TOPIC, &CHATTER_SUB as &'static dyn SubscriptionDispatch).await?;
 ```
 
-`as &'static dyn PublisherDrain` は `static` 変数に対してのみ有効な操作で、
-なぜ `&'static dyn Trait` が必要かをユーザーは理解しにくい。
-**改善案**: `Publisher::token()` や `Subscription::handle()` などのメソッドで
-ユーザーから `dyn Trait` を隠蔽する。
+`Publisher::as_drain()` / `Subscription::as_dispatch()` メソッドを追加して隠蔽:
+```rust
+node.register_publisher(CHATTER_PUB.as_drain());
+node.subscribe(CHATTER_TOPIC, CHATTER_SUB.as_dispatch()).await?;
+```
 
-#### 2. `CDR_BUF_CAP` の手動計算が難しく間違えやすい
+#### 2. `CDR_BUF_CAP` の手動計算が難しく間違えやすい ✅ 解決済み
 
+以前のコード:
 ```rust
 const CDR_BUF_CAP: usize = 144;  // 4 + 4 + 128 + 1 = 137... なぜ 144?
 ```
 
-メッセージ型のアライメントやヌル終端を含む正確な CDR バッファサイズを
-ユーザーが手動で計算するのは困難。過小に設定するとパニックではなくデータ欠損が発生する。
-**改善案**: `Publisher::<StringMsg, N>` が提供する `fn suggested_cdr_cap<M: Serialize>() -> usize`
-のような計算ヘルパー、または `const MIN_CDR_CAP` 付きのメッセージトレイトが望ましい。
+`cdr::cdr_cap_for_string()` ヘルパーで自動計算:
+```rust
+const CDR_BUF_CAP: usize = cdr_cap_for_string(128); // = 137 (4+4+128+1)
+```
 
-#### 3. `TopicKeyExpr` の type_hash が手入力
+文字列サイズを変更すれば CAP も自動的に追従する。
 
+#### 3. `TopicKeyExpr` の type_hash が手入力 ✅ 解決済み
+
+以前のコード:
 ```rust
 const CHATTER_TOPIC: TopicKeyExpr = TopicKeyExpr::new(
-    0, "chatter",
-    "std_msgs::msg::dds_::String_",
-    "RIHS01_df668c740482bbd48fb39d76a70dfd4bd59db1288021743503259e948f6b1a18", // 手入力
+    0, "chatter", "std_msgs::msg::dds_::String_",
+    "RIHS01_df668c740482bbd48fb39d76a70dfd4bd59db1288021743503259e948f6b1a18",
 );
 ```
 
-RIHS01 ハッシュのタイポは実行時まで検出できない（ROS2 側でトピックが発見されない）。
-**改善案**: `std_msgs::msg::String_::KEY_EXPR` のような定義済み定数の提供。
+`ros2::msg` モジュールの定義済み定数を使用:
+```rust
+const CHATTER_TOPIC: TopicKeyExpr = msg::std_msgs::String::CHATTER;
+// または
+const MY_TOPIC: TopicKeyExpr = msg::std_msgs::String::topic(0, "my_topic");
+```
 
-#### 4. 再接続後のサブスクライバー状態
+タイポはコンパイル時に検出される。
 
-`node.spin()` が返ると Node は消費される。再接続後に `subscribe()` を再呼び出しているが、
-`CHATTER_SUB` のキューには切断前の古いメッセージが残留している可能性がある。
-**改善案**: `Subscription::clear()` を提供し、再接続時に古いメッセージをフラッシュできるようにする。
+#### 4. 再接続後のサブスクライバー状態 ✅ 解決済み
+
+`Subscription::clear()` を追加して再接続前に古いメッセージをフラッシュ:
+```rust
+CHATTER_SUB.clear(); // 前セッションの古いメッセージを破棄
+node.subscribe(CHATTER_TOPIC, CHATTER_SUB.as_dispatch()).await?;
+```
 
 ---
 
 ### 組み込みシステムとしてのバグリスク
 
-#### 5. TCP バッファのスタック配置（スタックオーバーフロー危険）
+#### 5. TCP バッファのスタック配置（スタックオーバーフロー危険）✅ 解決済み
+
+`StaticCell<[u8; 4096]>` statics に移動済み。詳細は main.rs の `TCP_RX_BUF` / `TCP_TX_BUF` / `ZENOH_RX_BUF` を参照。
+
+#### 6. ランダムシードが固定値（MAC アドレス衝突）⚠️ 既知の課題
 
 ```rust
-async fn zenoh_task(stack: Stack<'static>) {
-    loop {
-        let mut tcp_rx = [0u8; 4096];   // ← ループ毎にスタックに 4 KB!
-        let mut tcp_tx = [0u8; 4096];   // ← 合計 8 KB + rx_buf 4 KB = 12 KB/iteration
-        ...
-        let mut rx_buf = [0u8; 4096];   // ← さらに 4 KB
+let seed: u64 = 0x1234_5678_9abc_def0; // REPLACE with hardware-derived entropy
 ```
 
-RP2040 の SRAM は 264 KB だが、embassy の非同期スタックは 4–16 KB 程度。
-ループボディ内で 12 KB をスタックに置くと他タスクのスタックと衝突する危険がある。
-**修正**: これらの配列を `static` か `StaticCell<[u8; N]>` で確保する。
+複数のデバイスが同じシードを持つと ARP や TCP 初期シーケンス番号が衝突する可能性がある。
+RP2040 の `ROSC` (リングオシレータ) や `UID` (チップ固有 ID) を使って entropy を得ることを推奨。
 
-```rust
-static TCP_RX: StaticCell<[u8; 4096]> = StaticCell::new();
-static TCP_TX: StaticCell<[u8; 4096]> = StaticCell::new();
-static RX_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
-```
+#### 7. `panic!` がサイレントに再起動する可能性 ⚠️ 既知の課題 (部分対応)
 
-ただし `TcpSocket` は借用ライフタイムのため、`StaticCell` による `'static` バッファが必要。
+`panic-probe` は probe-rs 接続時に defmt で詳細を出力する。スタンドアロン環境では
+再起動ループになるだけ。`PANIC_COUNT` 静的カウンターを追加し、起動時に前回のパニック数を
+ログ出力することで兆候を検出できる（ただし RAM カウンターのため電源断で消える）。
 
-#### 6. ランダムシードが固定値（MAC アドレス衝突）
+**完全対応策**: watchdog スクラッチレジスタにパニック回数を書き込み、フラッシュに永続化する。
 
-```rust
-let seed: u64 = 0x1234_5678_9abc_def0;  // 全デバイスで同一
-```
+#### 8. `app_task` のパブリッシュ失敗が無視される ⚠️ 既知の課題 (部分対応)
 
-複数のデバイスが同じシードを持つと、ARP や TCP 初期シーケンス番号が衝突する可能性がある。
-RP2040 には `ROSC` (リングオシレータ) や `UID` (チップ固有 ID) があるため、これを使って
-entropy を得るべき。
-
-#### 7. `panic!` がサイレントに再起動する可能性
-
-`expect("W5500 init failed")` などのパニックは `panic-probe` が defmt 出力し probe-rs で
-確認できるが、probe-rs なしの量産環境では再起動ループになるだけでデバッグ情報が消える。
-**対策**: watchdog タイマーと組み合わせ、パニック回数をフラッシュに記録するリカバリ戦略を検討する。
-
-#### 8. `app_task` のパブリッシュ失敗が無視される
-
+ドロップカウンターを追加してトラッキングを改善:
 ```rust
 match CHATTER_PUB.send(&msg).await {
     Ok(()) => {}
-    Err(e) => error!("[app] Publish error: {}", e),  // ログだけ; 再試行なし
+    Err(e) => {
+        drop_count += 1;
+        error!("[app] Publish error (total drops={}): {}", drop_count, e);
+    }
 }
 ```
 
-`Zenoh セッション未確立時` に `send()` がキューフル `Err` を返しても、
-ログを出力して次の 5 秒待機に進む。メッセージは黙って失われる。
-**改善案**: エラーカウンタをトラッキングし、一定数を超えたらシステムリセットを検討する。
-または `send()` を再試行するリトライロジックを追加する。
+セッション未確立時にメッセージが失われることは変わらないため、
+将来は再試行ロジックや接続待機キューの実装が望ましい。

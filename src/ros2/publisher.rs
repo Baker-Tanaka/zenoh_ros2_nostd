@@ -14,8 +14,8 @@
 //! // From any async task:
 //! CHATTER_PUB.send(&msg).await?;
 //!
-//! // Register with the node so it drains and transmits:
-//! node.register_publisher(&CHATTER_PUB);
+//! // Register with the node (no explicit dyn cast needed):
+//! node.register_publisher(CHATTER_PUB.as_drain());
 //! ```
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -126,6 +126,49 @@ impl<M: Serialize, const CDR_CAP: usize, const QUEUE: usize> Publisher<M, CDR_CA
             })
             .await;
         Ok(())
+    }
+
+    /// Serialize `msg` to CDR and try to enqueue it without blocking.
+    ///
+    /// Returns `Err(Error::BufferFull)` if the internal queue is full.
+    /// Returns `Err(Error::Cdr(_))` if CDR serialization fails.
+    ///
+    /// Use this in time-critical paths where blocking is unacceptable.
+    ///
+    /// **Protocol note**: The rmw_zenoh_cpp attachment requires a valid sequence
+    /// number and timestamp for proper message ordering and diagnostics.
+    /// This method sets both to `0`, which is not a valid sequence number and
+    /// may cause issues with ROS2 tools that rely on message metadata (e.g.,
+    /// `ros2 bag`, `rqt`).  Use [`send`](Self::send) for production use.
+    pub fn try_send(&self, msg: &M) -> Result<(), Error> {
+        let mut raw = [0u8; CDR_CAP];
+        let n = cdr::serialize_with_header(&mut raw, msg).map_err(Error::Cdr)?;
+
+        let mut data: heapless::Vec<u8, CDR_CAP> = heapless::Vec::new();
+        let _ = data.extend_from_slice(&raw[..n]);
+
+        // timestamp/seq will be zero for non-blocking sends — acceptable for
+        // diagnostics/fire-and-forget where the attachment precision is irrelevant.
+        self.channel
+            .try_send(CdrPayload {
+                data,
+                // Zero seq/timestamp: non-standard but acceptable for fire-and-forget
+                // or testing.  See method doc for protocol compliance implications.
+                seq_num: 0,
+                timestamp_ns: 0,
+            })
+            .map_err(|_| Error::BufferFull)
+    }
+
+    /// Return a `&'static dyn PublisherDrain` suitable for [`Node::register_publisher`].
+    ///
+    /// This hides the `as &'static dyn PublisherDrain` boilerplate from the caller.
+    ///
+    /// ```rust,ignore
+    /// node.register_publisher(CHATTER_PUB.as_drain());
+    /// ```
+    pub fn as_drain(&'static self) -> &'static dyn PublisherDrain {
+        self
     }
 }
 

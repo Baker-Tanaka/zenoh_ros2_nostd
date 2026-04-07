@@ -92,6 +92,31 @@ where
                 .map_err(Error::Cdr),
         )
     }
+
+    /// Drain and discard all pending messages from the internal queue.
+    ///
+    /// Call this after a session reconnect to prevent stale messages (received
+    /// before the disconnect) from being processed in the new session context.
+    ///
+    /// ```rust,ignore
+    /// // In zenoh_task, before re-subscribing after reconnect:
+    /// CHATTER_SUB.clear();
+    /// node.subscribe(CHATTER_TOPIC, CHATTER_SUB.as_dispatch()).await?;
+    /// ```
+    pub fn clear(&self) {
+        self.inner.clear();
+    }
+
+    /// Return a `&'static dyn SubscriptionDispatch` suitable for [`Node::subscribe`].
+    ///
+    /// This hides the `as &'static dyn SubscriptionDispatch` boilerplate from the caller.
+    ///
+    /// ```rust,ignore
+    /// node.subscribe(CHATTER_TOPIC, CHATTER_SUB.as_dispatch()).await?;
+    /// ```
+    pub fn as_dispatch(&'static self) -> &'static dyn SubscriptionDispatch {
+        self
+    }
 }
 
 impl<M, const MSG_SIZE: usize, const QUEUE: usize> SubscriptionDispatch
