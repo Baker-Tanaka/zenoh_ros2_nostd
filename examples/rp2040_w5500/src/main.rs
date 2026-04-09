@@ -4,19 +4,6 @@
 //! `std_msgs/String` on `/chatter` every 5 seconds and echoes any
 //! received `/chatter` messages via defmt RTT.
 //!
-//! ## Hardware (baker link.Dev)
-//!
-//! ```text
-//! RP2040 GPIO         │ W5500 pin
-//! ────────────────────┼──────────────────
-//! GP16 (SPI0 RX/MISO) │ MISO
-//! GP17 (GP output)    │ SCS  (chip select, active-low)
-//! GP18 (SPI0 SCK)     │ SCLK
-//! GP19 (SPI0 TX/MOSI) │ MOSI
-//! GP20 (GP input)     │ INTn (active-low, pull-up on RP2040 side)
-//! GP21 (GP output)    │ RSTn (active-low; hold HIGH for normal op)
-//! ```
-//!
 //! Adjust pin constants below if your board wires the W5500 differently.
 //!
 //! ## Network topology
@@ -25,14 +12,6 @@
 //! RP2040+W5500 ──Ethernet──► Zenoh router (zenohd / rmw_zenohd :7447)
 //!                              ▲
 //!              Docker ROS2 ────┘   (ros2 topic echo /chatter)
-//! ```
-//!
-//! ## Setup
-//!
-//! ```sh
-//! cp config.json.example config.json
-//! # Set router_addr to IP:port of your Zenoh router, e.g. "192.168.1.1:7447"
-//! cargo run --release
 //! ```
 //!
 //! ## Task architecture
@@ -53,13 +32,16 @@ use config::AppConfig;
 use defmt::*;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
-use embassy_net::{DhcpConfig, Runner as NetRunner, Stack, StackResources, tcp::TcpSocket};
-use embassy_rp::{bind_interrupts, dma, peripherals::{DMA_CH0, DMA_CH1, SPI0}};
-use embassy_rp::gpio::{Input, Level, Output, Pull};
-use embassy_rp::spi::{Async, Config as SpiConfig, Spi};
+use embassy_net::{tcp::TcpSocket, DhcpConfig, Runner as NetRunner, Stack, StackResources};
 use embassy_net_wiznet::chip::W5500;
 use embassy_net_wiznet::{Device as WiznetDevice, Runner as WiznetRunner, State as WiznetState};
-use embassy_time::{Duration, Timer, with_timeout};
+use embassy_rp::gpio::{Input, Level, Output, Pull};
+use embassy_rp::spi::{Async, Config as SpiConfig, Spi};
+use embassy_rp::{
+    bind_interrupts, dma,
+    peripherals::{DMA_CH0, DMA_CH1, SPI0},
+};
+use embassy_time::{with_timeout, Duration, Timer};
 use embedded_hal_bus::spi::{ExclusiveDevice, NoDelay};
 use heapless::String;
 use panic_probe as _;
@@ -67,17 +49,12 @@ use portable_atomic::{AtomicU32, Ordering};
 use serde::{Deserialize, Serialize};
 use static_cell::StaticCell;
 use zenoh_ros2_nostd::cdr::cdr_cap_for_string;
-use zenoh_ros2_nostd::ros2::{Publisher, Subscription, msg};
-use zenoh_ros2_nostd::session::ReconnectPolicy;
-
-// ── Interrupt bindings ───────────────────────────────────────────────────────
+use zenoh_ros2_nostd::ros2::{msg, Publisher, ReconnectPolicy, Subscription};
 
 // DMA_IRQ_0 handles all DMA channels — required for async SPI.
 bind_interrupts!(struct Irqs {
     DMA_IRQ_0 => dma::InterruptHandler<DMA_CH0>, dma::InterruptHandler<DMA_CH1>;
 });
-
-// ── ROS2 topic definition ────────────────────────────────────────────────────
 
 /// Key expression for `std_msgs/String` on `/chatter`.
 ///
@@ -98,12 +75,8 @@ struct StringMsg {
 /// if the string size changes.
 const CDR_BUF_CAP: usize = cdr_cap_for_string(128);
 
-// ── Static publisher and subscriber ─────────────────────────────────────────
-
 static CHATTER_PUB: Publisher<StringMsg, CDR_BUF_CAP, 4> = Publisher::new(CHATTER_TOPIC);
 static CHATTER_SUB: Subscription<StringMsg, CDR_BUF_CAP, 4> = Subscription::new();
-
-// ── Panic counter ────────────────────────────────────────────────────────────
 
 /// Number of panics recorded since power-on (RAM counter — resets on power-off).
 ///
@@ -126,29 +99,12 @@ static CHATTER_SUB: Subscription<StringMsg, CDR_BUF_CAP, 4> = Subscription::new(
 /// providing visibility when probe-rs **is** attached.
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
-// ── Static storage for embassy ───────────────────────────────────────────────
-
-static STACK_RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
-static WIZNET_STATE: StaticCell<WiznetState<8, 8>> = StaticCell::new();
-
-// TCP buffers as statics — prevents stack overflow in zenoh_task's reconnection loop.
-// On RP2040, each embassy task has a fixed stack (typ. 4–16 KB).  Placing 12 KB of
-// buffers as locals that are live across `.await` points would exceed that budget.
-static TCP_RX_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
-static TCP_TX_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
-static ZENOH_RX_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
-
-// ── Type aliases to avoid long names in task signatures ──────────────────────
-
 /// Async SPI bus on SPI0 with DMA.
 type MySpi = Spi<'static, SPI0, Async>;
 /// SPI bus wrapped with chip-select for use as an async SpiDevice.
 type MySpiDevice = ExclusiveDevice<MySpi, Output<'static>, NoDelay>;
 /// W5500 embassy runner type.
-type MyWiznetRunner =
-    WiznetRunner<'static, W5500, MySpiDevice, Input<'static>, Output<'static>>;
-
-// ── Entry point ──────────────────────────────────────────────────────────────
+type MyWiznetRunner = WiznetRunner<'static, W5500, MySpiDevice, Input<'static>, Output<'static>>;
 
 /// Embassy entry point on RP2040.
 ///
@@ -156,6 +112,9 @@ type MyWiznetRunner =
 /// spawns the application tasks.
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    static STACK_RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
+    static WIZNET_STATE: StaticCell<WiznetState<8, 8>> = StaticCell::new();
+
     let p = embassy_rp::init(Default::default());
 
     // Report the panic count from the previous run.  A non-zero count means
@@ -164,7 +123,10 @@ async fn main(spawner: Spawner) {
     // signal that something went wrong.
     let panics = PANIC_COUNT.load(Ordering::Relaxed);
     if panics > 0 {
-        warn!("[main] ⚠️  {} panic(s) recorded since last power-on.", panics);
+        warn!(
+            "[main] ⚠️  {} panic(s) recorded since last power-on.",
+            panics
+        );
     } else {
         info!("[main] Starting — no panics recorded.");
     }
@@ -177,19 +139,16 @@ async fn main(spawner: Spawner) {
     // Async SPI uses DMA for non-blocking transfers.
     // Irqs provides the DMA interrupt handler binding required by embassy-rp 0.10.
     let spi: MySpi = Spi::new(
-        p.SPI0,
-        p.PIN_18,   // SCK
-        p.PIN_19,   // MOSI (TX)
-        p.PIN_16,   // MISO (RX)
-        p.DMA_CH0,
-        p.DMA_CH1,
-        Irqs,       // DMA interrupt binding
+        p.SPI0, p.PIN_18, // SCK
+        p.PIN_19, // MOSI (TX)
+        p.PIN_16, // MISO (RX)
+        p.DMA_CH0, p.DMA_CH1, Irqs, // DMA interrupt binding
         spi_cfg,
     );
 
     let cs: Output<'static> = Output::new(p.PIN_17, Level::High);
-    let int: Input<'static> = Input::new(p.PIN_20, Pull::Up);
-    let rst: Output<'static> = Output::new(p.PIN_21, Level::High);
+    let int: Input<'static> = Input::new(p.PIN_15, Pull::Up);
+    let rst: Output<'static> = Output::new(p.PIN_14, Level::High);
 
     // Wrap SPI bus + CS into an async SpiDevice.
     // `async` feature of embedded-hal-bus enables the embedded_hal_async::spi::SpiDevice impl.
@@ -204,15 +163,10 @@ async fn main(spawner: Spawner) {
 
     // W5500 async init — async fn, must be .await-ed.
     // Returns Result<(Device, Runner), _> — expect at startup is appropriate.
-    let (net_device, wiznet_runner) = embassy_net_wiznet::new(
-        mac_addr,
-        wiznet_state,
-        spi_device,
-        int,
-        rst,
-    )
-    .await
-    .expect("W5500 init failed");
+    let (net_device, wiznet_runner) =
+        embassy_net_wiznet::new(mac_addr, wiznet_state, spi_device, int, rst)
+            .await
+            .expect("W5500 init failed");
 
     // ⚠️ Fixed seed — predictable TCP sequence numbers and port choices.
     // For production, derive entropy from RP2040's ring oscillator (ROSC) or
@@ -226,15 +180,11 @@ async fn main(spawner: Spawner) {
         seed,
     );
 
-    // In embassy-executor 0.10, task functions return Result<SpawnToken, SpawnError>.
-    // spawner.spawn() takes a SpawnToken, so unwrap the Result first.
     spawner.spawn(ethernet_task(wiznet_runner).expect("spawn ethernet_task"));
     spawner.spawn(net_task(net_runner).expect("spawn net_task"));
     spawner.spawn(zenoh_task(stack).expect("spawn zenoh_task"));
     spawner.spawn(app_task().expect("spawn app_task"));
 }
-
-// ── Tasks ────────────────────────────────────────────────────────────────────
 
 /// Drives W5500 SPI packet I/O — must run concurrently with net_task.
 #[embassy_executor::task]
@@ -262,23 +212,21 @@ async fn net_task(mut runner: NetRunner<'static, WiznetDevice<'static>>) {
 /// `Read + Write` transport.  Steps 3–6 remain unchanged.
 #[embassy_executor::task]
 async fn zenoh_task(stack: Stack<'static>) {
+    static TCP_RX_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
+    static TCP_TX_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
+    static ZENOH_RX_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
+
     let cfg = AppConfig::new();
     let mut reconnect = ReconnectPolicy::default_policy();
+    let builder = cfg.zenoh.session.node_builder().name("rp2040_node");
 
-    // Allocate TCP and RX buffers ONCE, outside the reconnection loop.
-    // Placing 4 KB arrays inside the loop body as locals that are live across
-    // .await points would bloat the async state machine and risk stack overflow.
-    // StaticCell ensures single-initialization; after TcpSocket/Node are dropped
-    // at each loop iteration's end, the borrows release and buffers are reused.
     let tcp_rx = TCP_RX_BUF.init([0u8; 4096]);
     let tcp_tx = TCP_TX_BUF.init([0u8; 4096]);
     let rx_buf = ZENOH_RX_BUF.init([0u8; 4096]);
 
     loop {
-        // ── Wait for DHCP ────────────────────────────────────────────────────
         wait_for_dhcp(stack).await;
 
-        // ── TCP connect to Zenoh router ──────────────────────────────────────
         let mut socket = TcpSocket::new(stack, tcp_rx, tcp_tx);
         socket.set_timeout(Some(Duration::from_secs(30)));
 
@@ -302,15 +250,7 @@ async fn zenoh_task(stack: Stack<'static>) {
             }
         }
 
-        // ── Build Node: Zenoh handshake + configure pub/sub ──────────────────
-        let mut node = match cfg
-            .zenoh
-            .session
-            .node_builder()
-            .name("rp2040_node")
-            .open(socket)
-            .await
-        {
+        let mut node = match builder.open(socket).await {
             Ok(n) => n,
             Err(e) => {
                 error!("[zenoh] Handshake failed: {}", e);
@@ -335,14 +275,13 @@ async fn zenoh_task(stack: Stack<'static>) {
             continue;
         }
 
-        reconnect.reset();
         info!("[zenoh] Node '{}' ready.", node.node_name());
 
-        // ── Session loop — returns only when the connection drops ────────────
-        node.spin(rx_buf).await;
-
-        warn!("[zenoh] Session ended — reconnecting.");
-        reconnect.wait_and_advance().await;
+        node.spin_and_backoff(rx_buf, &mut reconnect).await;
+        warn!(
+            "[zenoh] Session ended — reconnecting (attempt #{}).",
+            reconnect.attempt()
+        );
     }
 }
 
@@ -357,7 +296,6 @@ async fn app_task() {
     let mut counter: u32 = 0;
     let mut drop_count: u32 = 0;
     loop {
-        // ── Publish ─────────────────────────────────────────────────────────
         let mut data: String<128> = String::new();
         let _ = core::fmt::write(
             &mut data,
@@ -377,7 +315,6 @@ async fn app_task() {
             }
         }
 
-        // ── Receive ─────────────────────────────────────────────────────────
         while let Some(result) = CHATTER_SUB.try_recv() {
             match result {
                 Ok(m) => info!("[app] /chatter: {=[u8]}", m.data.as_bytes()),
@@ -388,8 +325,6 @@ async fn app_task() {
         Timer::after(Duration::from_secs(5)).await;
     }
 }
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Poll until embassy-net has an assigned IPv4 address.
 async fn wait_for_dhcp(stack: Stack<'_>) {

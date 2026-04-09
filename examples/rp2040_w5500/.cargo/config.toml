@@ -5,13 +5,14 @@ target = "thumbv6m-none-eabi"
 build-std = ["alloc", "core", "compiler_builtins"]
 
 [target.thumbv6m-none-eabi]
-runner = "probe-rs run --chip RP2040"
 rustflags = [
-    # Linker script supplied by cortex-m-rt (standard ARM Embedded ABI + memory map)
-    "-C", "link-arg=--nmagic",
-    "-C", "link-arg=-Tlink.x",
-    # defmt log section
-    "-C", "link-arg=-Tdefmt.x",
-    # Frame pointers for readable backtraces in probe-rs
-    "-C", "force-frame-pointers",
+    "-C",
+    "linker=flip-link",
+    # --nmagic, -Tlink.x, -Tdefmt.x are already provided by the workspace root
+    # .cargo/config.toml (cfg(all(target_arch="arm", target_os="none")) section).
+    # Do NOT repeat them here — duplicate linker args cause "region BOOT2 already defined".
+    "-C",
+    "llvm-args=--inline-threshold=5",
+    "-C",
+    "no-vectorize-loops",
 ]

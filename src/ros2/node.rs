@@ -22,7 +22,7 @@
 //! Ethernet (or any other transport) without touching Node, Publisher, or
 //! Subscription code.
 
-use embassy_time::{Duration, with_timeout};
+use embassy_time::{with_timeout, Duration};
 use embedded_io_async::{Read, Write};
 use heapless::Vec;
 
@@ -30,6 +30,7 @@ use super::keyexpr::TopicKeyExpr;
 use super::publisher::PublisherDrain;
 use super::subscription::SubscriptionDispatch;
 use crate::error::Error;
+use crate::session::reconnect::ReconnectPolicy;
 use crate::transport::{codec, frame, handshake, protocol::ZenohId};
 
 // ── Internal frame buffer sizes ───────────────────────────────────────────────
@@ -74,6 +75,7 @@ const MAX_SUBS: usize = 4;
 ///     .open(socket)
 ///     .await?;
 /// ```
+#[derive(Clone, Copy)]
 pub struct NodeBuilder {
     node_name: &'static str,
     namespace: &'static str,
@@ -125,10 +127,9 @@ impl NodeBuilder {
     pub async fn open<T: Read + Write>(self, mut transport: T) -> Result<Node<T>, Error> {
         let mut hs_tx = [0u8; 512];
         let mut hs_rx = [0u8; 4096];
-        let hs =
-            handshake::client_handshake(&mut transport, &self.zid, &mut hs_tx, &mut hs_rx)
-                .await
-                .map_err(Error::Transport)?;
+        let hs = handshake::client_handshake(&mut transport, &self.zid, &mut hs_tx, &mut hs_rx)
+            .await
+            .map_err(Error::Transport)?;
 
         let lease_ms = hs.lease_ms.max(MIN_LEASE_MS);
 
@@ -270,8 +271,11 @@ impl<T: Read + Write> Node<T> {
             }
 
             // ── 2. Wait for next incoming frame (or keepalive timeout) ────────
-            match with_timeout(keepalive_interval, frame::read_frame(&mut self.transport, rx_buf))
-                .await
+            match with_timeout(
+                keepalive_interval,
+                frame::read_frame(&mut self.transport, rx_buf),
+            )
+            .await
             {
                 Ok(Ok(n)) => {
                     if self.dispatch_frame(&rx_buf[..n]).is_err() {
@@ -293,6 +297,21 @@ impl<T: Read + Write> Node<T> {
                 }
             }
         }
+    }
+
+    /// Spin the session and apply exponential backoff on disconnect.
+    ///
+    /// Convenience wrapper combining three into one:  
+    /// 1. [`ReconnectPolicy::reset`] — marks the connection as successful.
+    /// 2. [`spin`](Self::spin) — runs until the session drops.
+    /// 3. [`ReconnectPolicy::wait_and_advance`] — applies the backoff delay.
+    ///
+    /// The caller should rebuild the transport and call [`NodeBuilder::open`]
+    /// again when this returns.
+    pub async fn spin_and_backoff(&mut self, rx_buf: &mut [u8], policy: &mut ReconnectPolicy) {
+        policy.reset();
+        self.spin(rx_buf).await;
+        policy.wait_and_advance().await;
     }
 
     // ── Getters ───────────────────────────────────────────────────────────────
@@ -322,9 +341,8 @@ impl<T: Read + Write> Node<T> {
         let mut pos =
             codec::encode_frame_header(&mut buf, self.sn, true).map_err(Error::Transport)?;
         self.sn = self.sn.wrapping_add(1);
-        pos +=
-            codec::encode_declare_keyexpr(&mut buf[pos..], key_id, key_expr)
-                .map_err(Error::Transport)?;
+        pos += codec::encode_declare_keyexpr(&mut buf[pos..], key_id, key_expr)
+            .map_err(Error::Transport)?;
         frame::write_frame(&mut self.transport, &buf[..pos])
             .await
             .map_err(Error::Transport)?;
@@ -336,9 +354,8 @@ impl<T: Read + Write> Node<T> {
         let mut pos =
             codec::encode_frame_header(&mut buf, self.sn, true).map_err(Error::Transport)?;
         self.sn = self.sn.wrapping_add(1);
-        pos +=
-            codec::encode_declare_subscriber_mapped(&mut buf[pos..], key_id as u32, key_id)
-                .map_err(Error::Transport)?;
+        pos += codec::encode_declare_subscriber_mapped(&mut buf[pos..], key_id as u32, key_id)
+            .map_err(Error::Transport)?;
         frame::write_frame(&mut self.transport, &buf[..pos])
             .await
             .map_err(Error::Transport)?;
@@ -391,7 +408,7 @@ impl<T: Read + Write> Node<T> {
 
     fn dispatch_frame(&self, frame_buf: &[u8]) -> Result<(), Error> {
         use crate::transport::codec::{
-            TransportMsgKind, decode_frame_header, decode_push_put, parse_transport_msg_kind,
+            decode_frame_header, decode_push_put, parse_transport_msg_kind, TransportMsgKind,
         };
 
         if frame_buf.is_empty() {
@@ -420,4 +437,3 @@ impl<T: Read + Write> Node<T> {
         }
     }
 }
-

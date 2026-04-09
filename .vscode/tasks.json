@@ -109,6 +109,15 @@
             "problemMatcher": [
                 "$rustc"
             ]
+        },
+        {
+            "label": "rp2040-w5500: build (debug)",
+            "type": "shell",
+            "command": "cd examples/rp2040_w5500 && cargo build",
+            "group": "build",
+            "problemMatcher": [
+                "$rustc"
+            ]
         }
     ],
     "inputs": [

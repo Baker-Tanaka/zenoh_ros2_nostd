@@ -9,6 +9,7 @@ pub mod publisher;
 pub mod qos;
 pub mod subscription;
 
+pub use crate::session::ReconnectPolicy;
 pub use config::ZenohRos2Config;
 pub use keyexpr::TopicKeyExpr;
 pub use node::{Node, NodeBuilder};

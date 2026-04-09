@@ -3,6 +3,8 @@
 //! Routes log macros to `defmt` or `log` depending on enabled features.
 //! If neither feature is enabled, logging is a no-op.
 
+#![allow(unused_macros)]
+
 // ---- defmt backend ----
 
 #[cfg(feature = "defmt")]

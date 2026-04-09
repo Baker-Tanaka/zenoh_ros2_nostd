@@ -44,6 +44,27 @@
                 }
             ],
             "consoleLogLevel": "Info"
+        },
+        {
+            "preLaunchTask": "rp2040-w5500: build (debug)",
+            "type": "probe-rs-debug",
+            "request": "launch",
+            "name": "RP2040 W5500 demo",
+            "server": "host.docker.internal:50001",
+            "speed": 4000,
+            "chip": "RP2040",
+            "flashingConfig": {
+                "flashingEnabled": true,
+                "haltAfterReset": true,
+            },
+            "coreConfigs": [
+                {
+                    "coreIndex": 0,
+                    "programBinary": "${env:LOCAL_WORKSPACE_FOLDER}/examples/rp2040_w5500/target/thumbv6m-none-eabi/debug/rp2040-w5500",
+                    "rttEnabled": true,
+                }
+            ],
+            "consoleLogLevel": "Info"
         }
     ]
 }

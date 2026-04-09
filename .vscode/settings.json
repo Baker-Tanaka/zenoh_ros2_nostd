@@ -1,5 +1,10 @@
 {
     "rust-analyzer.cargo.target": "thumbv6m-none-eabi",
     "rust-analyzer.check.allTargets": false,
+    "rust-analyzer.linkedProjects": [
+        "Cargo.toml",
+        "examples/rp2040_w5500/Cargo.toml",
+        "examples/esp32c3_wifi/Cargo.toml"
+    ],
     "editor.formatOnSave": true
 }

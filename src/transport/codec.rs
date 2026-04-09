@@ -871,6 +871,7 @@ pub fn encode_declare_subscriber_mapped(
     Ok(pos)
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1192,7 +1193,12 @@ mod tests {
             + 33 // attachment bytes
             + 1 // payload vbyte len
             + payload.len();
-        assert!(n >= min_size, "encoded size {} < expected min {}", n, min_size);
+        assert!(
+            n >= min_size,
+            "encoded size {} < expected min {}",
+            n,
+            min_size
+        );
     }
 
     #[test]

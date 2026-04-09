@@ -1,7 +1,7 @@
 //! CDR Little Endian Deserializer (serde-based, no_std).
 
 use super::CdrError;
-use serde::de::{self, Deserialize, DeserializeSeed, IntoDeserializer, Visitor};
+use serde::de::{self, DeserializeSeed, IntoDeserializer, Visitor};
 
 /// CDR Little Endian deserializer reading from a `&[u8]` slice.
 pub struct CdrDeserializer<'de> {
@@ -192,7 +192,10 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut CdrDeserializer<'de> {
 
     fn deserialize_seq<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, CdrError> {
         let len = self.read_u32()? as usize;
-        visitor.visit_seq(SeqAccess { de: self, remaining: len })
+        visitor.visit_seq(SeqAccess {
+            de: self,
+            remaining: len,
+        })
     }
 
     fn deserialize_tuple<V: Visitor<'de>>(
@@ -200,7 +203,10 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut CdrDeserializer<'de> {
         len: usize,
         visitor: V,
     ) -> Result<V::Value, CdrError> {
-        visitor.visit_seq(SeqAccess { de: self, remaining: len })
+        visitor.visit_seq(SeqAccess {
+            de: self,
+            remaining: len,
+        })
     }
 
     fn deserialize_tuple_struct<V: Visitor<'de>>(
@@ -209,12 +215,18 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut CdrDeserializer<'de> {
         len: usize,
         visitor: V,
     ) -> Result<V::Value, CdrError> {
-        visitor.visit_seq(SeqAccess { de: self, remaining: len })
+        visitor.visit_seq(SeqAccess {
+            de: self,
+            remaining: len,
+        })
     }
 
     fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, CdrError> {
         let len = self.read_u32()? as usize;
-        visitor.visit_map(MapAccess { de: self, remaining: len })
+        visitor.visit_map(MapAccess {
+            de: self,
+            remaining: len,
+        })
     }
 
     fn deserialize_struct<V: Visitor<'de>>(
@@ -290,10 +302,7 @@ impl<'a, 'de> de::MapAccess<'de> for MapAccess<'a, 'de> {
         seed.deserialize(&mut *self.de).map(Some)
     }
 
-    fn next_value_seed<V: DeserializeSeed<'de>>(
-        &mut self,
-        seed: V,
-    ) -> Result<V::Value, CdrError> {
+    fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, CdrError> {
         seed.deserialize(&mut *self.de)
     }
 }
@@ -325,10 +334,7 @@ impl<'a, 'de> de::VariantAccess<'de> for EnumAccess<'a, 'de> {
         Ok(())
     }
 
-    fn newtype_variant_seed<T: DeserializeSeed<'de>>(
-        self,
-        seed: T,
-    ) -> Result<T::Value, CdrError> {
+    fn newtype_variant_seed<T: DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value, CdrError> {
         seed.deserialize(self.de)
     }
 
@@ -346,6 +352,7 @@ impl<'a, 'de> de::VariantAccess<'de> for EnumAccess<'a, 'de> {
 }
 
 /// Helper to convert u32 to a serde deserializer (for enum variant indexing).
+#[allow(dead_code)]
 struct U32Deserializer(u32);
 
 impl From<u32> for U32Deserializer {
@@ -354,6 +361,7 @@ impl From<u32> for U32Deserializer {
     }
 }
 
+#[allow(dead_code)]
 impl U32Deserializer {
     fn into_deserializer(self) -> Self {
         self

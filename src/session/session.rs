@@ -52,6 +52,7 @@ pub struct Session<T: Read + Write, const TX_BUF: usize = 512, const RX_BUF: usi
     /// Next sequence number for reliable frames.
     sn_reliable: Mutex<CriticalSectionRawMutex, u64>,
     /// Next sequence number for best-effort frames.
+    #[allow(dead_code)]
     sn_best_effort: Mutex<CriticalSectionRawMutex, u64>,
     /// Next key expression ID for declarations.
     next_key_id: Mutex<CriticalSectionRawMutex, u16>,

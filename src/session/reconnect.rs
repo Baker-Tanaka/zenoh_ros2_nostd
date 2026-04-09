@@ -3,6 +3,7 @@
 use embassy_time::{Duration, Timer};
 
 /// Reconnection policy with configurable exponential backoff.
+#[derive(Clone, Copy)]
 pub struct ReconnectPolicy {
     /// Initial delay before the first reconnection attempt.
     pub initial_delay_ms: u64,
