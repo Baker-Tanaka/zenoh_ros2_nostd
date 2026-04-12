@@ -1,10 +1,10 @@
 [build]
-target = "thumbv6m-none-eabi"
+target = "thumbv8m.main-none-eabihf"
 
 [unstable]
 build-std = ["alloc", "core", "compiler_builtins"]
 
-[target.thumbv6m-none-eabi]
+[target.'thumbv8m.main-none-eabihf']
 rustflags = [
     "-C",
     "linker=flip-link",

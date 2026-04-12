@@ -1,11 +1,11 @@
 [package]
-name = "rp2040-w5500"
+name = "w5100s-evb-pico2"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 # Run with:
-#   cd examples/rp2040_w5500
+#   cd examples/w5100s_evb_pico2
 #   cp config.json.example config.json      # edit router_addr
 #   cargo run --release
 
@@ -14,9 +14,9 @@ publish = false
 # executor-thread only — executor-interrupt is not used.
 embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
 
-# RP2040 HAL
+# RP2350 HAL
 embassy-rp = { version = "0.10", features = [
-    "rp2040",
+    "rp235xa",
     "unstable-pac",
     "time-driver",
     "critical-section-impl",
@@ -57,9 +57,8 @@ panic-probe = { version = "0.3", features = ["print-defmt"] }
 cortex-m = { version = "0.7", features = ["inline-asm"] }
 cortex-m-rt = "0.7"
 
-# Atomic operations emulation for Cortex-M0+ (thumbv6m does not have native CAS).
-# Required by embedded-hal-bus and other crates that use atomics.
-# unsafe-assume-single-core: safe for RP2040 main core (single-threaded async).
+# Atomic operations for Cortex-M33 (RP2350) single-core use.
+# unsafe-assume-single-core: safe for RP2350 main core (single-threaded async).
 portable-atomic = { version = "1", features = ["unsafe-assume-single-core"] }
 
 # zenoh-ros2-nostd library

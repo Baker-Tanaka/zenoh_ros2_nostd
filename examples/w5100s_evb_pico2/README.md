@@ -61,8 +61,8 @@ ros2 topic pub /chatter std_msgs/msg/String 'data: "Hello from ROS2"'
 ## タスクアーキテクチャ
 
 ```text
-main()         — RP2040 / W5500 初期化、embassy executor 起動
-  ├─ ethernet_task  — W5500 SPI パケット I/O (embassy-net-wiznet Runner)
+main()         — RP2350 / W5100S 初期化、embassy executor 起動
+  ├─ ethernet_task  — W5100S SPI パケット I/O (embassy-net-wiznet Runner)
   ├─ net_task        — embassy-net TCP/IP スタック
   ├─ zenoh_task      — DHCP待機 → TCP接続 → NodeBuilder::open() → spin() → 再接続
   └─ app_task        — 5秒毎に /chatter をパブリッシュ、受信メッセージをログ出力
@@ -84,7 +84,7 @@ static CHATTER_SUB: Subscription<StringMsg, CDR_BUF_CAP, 4> = Subscription::new(
 // 4. NodeBuilder でビルダー設定 → open(transport) でセッション確立
 let mut node = cfg.zenoh.session
     .node_builder()
-    .name("rp2040_node")
+    .name("pico2_node")
     .open(socket)           // T: Read + Write — WiFi, Ethernet, USB CDC など何でも可
     .await?;
 

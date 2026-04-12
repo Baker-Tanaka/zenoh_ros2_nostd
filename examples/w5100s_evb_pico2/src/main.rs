@@ -1,23 +1,32 @@
-//! RP2040 + W5500 Ethernet  ROS2 topic pub/sub demo.
+//! W5100S-EVB-Pico2 (RP2350 + W5100S) Ethernet  ROS2 topic pub/sub demo.
 //!
-//! Connects to a Zenoh router over W5500 Ethernet, then publishes
+//! Connects to a Zenoh router over W5100S Ethernet, then publishes
 //! `std_msgs/String` on `/chatter` every 5 seconds and echoes any
 //! received `/chatter` messages via defmt RTT.
 //!
-//! Adjust pin constants below if your board wires the W5500 differently.
+//! ## Hardware (W5100S-EVB-Pico2 default wiring)
+//!
+//! | RP2350 GPIO         | W5100S pin | Purpose               |
+//! |---------------------|------------|-----------------------|
+//! | GP16 (SPI0 RX/MISO) | MISO       | SPI data input        |
+//! | GP17 (output)       | SCS        | Chip select           |
+//! | GP18 (SPI0 SCK)     | SCLK       | SPI clock             |
+//! | GP19 (SPI0 TX/MOSI) | MOSI       | SPI data output       |
+//! | GP20 (output)       | RSTn       | Reset (active-low)    |
+//! | GP21 (input)        | INTn       | Interrupt (active-low)|
 //!
 //! ## Network topology
 //!
 //! ```text
-//! RP2040+W5500 ──Ethernet──► Zenoh router (zenohd / rmw_zenohd :7447)
-//!                              ▲
-//!              Docker ROS2 ────┘   (ros2 topic echo /chatter)
+//! RP2350+W5100S ──Ethernet──► Zenoh router (zenohd / rmw_zenohd :7447)
+//!                               ▲
+//!               Docker ROS2 ────┘   (ros2 topic echo /chatter)
 //! ```
 //!
 //! ## Task architecture
 //!
 //! ```text
-//! ethernet_task  — drives W5500 SPI packet I/O
+//! ethernet_task  — drives W5100S SPI packet I/O
 //! net_task       — embassy-net stack runner
 //! zenoh_task     — NodeBuilder::open(socket) → node.spin() → reconnect
 //! app_task       — CHATTER_PUB.send(&msg) every 5 s; CHATTER_SUB.try_recv()
@@ -33,7 +42,7 @@ use defmt::*;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_net::{tcp::TcpSocket, DhcpConfig, Runner as NetRunner, Stack, StackResources};
-use embassy_net_wiznet::chip::W5500;
+use embassy_net_wiznet::chip::W5100S;
 use embassy_net_wiznet::{Device as WiznetDevice, Runner as WiznetRunner, State as WiznetState};
 use embassy_rp::gpio::{Input, Level, Output, Pull};
 use embassy_rp::spi::{Async, Config as SpiConfig, Spi};
@@ -89,7 +98,7 @@ static CHATTER_SUB: Subscription<StringMsg, CDR_BUF_CAP, 4> = Subscription::new(
 /// #[panic_handler]
 /// fn panic_handler(info: &core::panic::PanicInfo) -> ! {
 ///     PANIC_COUNT.fetch_add(1, Ordering::Relaxed);
-///     // (Optional) write to RP2040 watchdog scratch register for persistence across resets.
+///     // (Optional) write to RP2350 watchdog scratch register for persistence across resets.
 ///     defmt::error!("PANIC: {}", defmt::Debug2Format(info));
 ///     cortex_m::asm::udf()
 /// }
@@ -103,17 +112,17 @@ static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 type MySpi = Spi<'static, SPI0, Async>;
 /// SPI bus wrapped with chip-select for use as an async SpiDevice.
 type MySpiDevice = ExclusiveDevice<MySpi, Output<'static>, NoDelay>;
-/// W5500 embassy runner type.
-type MyWiznetRunner = WiznetRunner<'static, W5500, MySpiDevice, Input<'static>, Output<'static>>;
+/// W5100S embassy runner type.
+type MyWiznetRunner = WiznetRunner<'static, W5100S, MySpiDevice, Input<'static>, Output<'static>>;
 
-/// Embassy entry point on RP2040.
+/// Embassy entry point on RP2350.
 ///
-/// Initialises peripherals, brings up the W5500 and networking stack, then
+/// Initialises peripherals, brings up the W5100S and networking stack, then
 /// spawns the application tasks.
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     static STACK_RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
-    static WIZNET_STATE: StaticCell<WiznetState<8, 8>> = StaticCell::new();
+    static WIZNET_STATE: StaticCell<WiznetState<4, 4>> = StaticCell::new();
 
     let p = embassy_rp::init(Default::default());
 
@@ -131,8 +140,8 @@ async fn main(spawner: Spawner) {
         info!("[main] Starting — no panics recorded.");
     }
 
-    // ── W5500 SPI peripheral (async + DMA) ──────────────────────────────────
-    // W5500 supports up to 33.3 MHz at 3.3 V.  10 MHz is a safe starting point.
+    // ── W5100S SPI peripheral (async + DMA) ─────────────────────────────────
+    // W5100S supports up to 14 MHz at 3.3 V.  10 MHz is a safe starting point.
     let mut spi_cfg = SpiConfig::default();
     spi_cfg.frequency = 10_000_000;
 
@@ -147,29 +156,29 @@ async fn main(spawner: Spawner) {
     );
 
     let cs: Output<'static> = Output::new(p.PIN_17, Level::High);
-    let int: Input<'static> = Input::new(p.PIN_15, Pull::Up);
-    let rst: Output<'static> = Output::new(p.PIN_14, Level::High);
+    let int: Input<'static> = Input::new(p.PIN_21, Pull::Up);
+    let rst: Output<'static> = Output::new(p.PIN_20, Level::High);
 
     // Wrap SPI bus + CS into an async SpiDevice.
     // `async` feature of embedded-hal-bus enables the embedded_hal_async::spi::SpiDevice impl.
     let spi_device: MySpiDevice = ExclusiveDevice::new_no_delay(spi, cs).unwrap();
 
     // ⚠️ Use a unique MAC per board!  Identical MACs on the same network cause
-    // ARP conflicts and intermittent connectivity.  Derive from RP2040's unique ID
+    // ARP conflicts and intermittent connectivity.  Derive from RP2350's unique ID
     // (accessible via the QSPI `FLASH_RUID_CMD` or the 64-bit UID at address 0x40130084).
     let mac_addr = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01]; // REPLACE with board-unique value
 
-    let wiznet_state = WIZNET_STATE.init(WiznetState::<8, 8>::new());
+    let wiznet_state = WIZNET_STATE.init(WiznetState::<4, 4>::new());
 
-    // W5500 async init — async fn, must be .await-ed.
+    // W5100S async init — async fn, must be .await-ed.
     // Returns Result<(Device, Runner), _> — expect at startup is appropriate.
     let (net_device, wiznet_runner) =
         embassy_net_wiznet::new(mac_addr, wiznet_state, spi_device, int, rst)
             .await
-            .expect("W5500 init failed");
+            .expect("W5100S init failed");
 
     // ⚠️ Fixed seed — predictable TCP sequence numbers and port choices.
-    // For production, derive entropy from RP2040's ring oscillator (ROSC) or
+    // For production, derive entropy from RP2350's ring oscillator (ROSC) or
     // chip UID to prevent collisions when multiple identical firmware images run.
     let seed: u64 = 0x1234_5678_9abc_def0; // REPLACE with hardware-derived entropy
 
@@ -186,7 +195,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(app_task().expect("spawn app_task"));
 }
 
-/// Drives W5500 SPI packet I/O — must run concurrently with net_task.
+/// Drives W5100S SPI packet I/O — must run concurrently with net_task.
 #[embassy_executor::task]
 async fn ethernet_task(runner: MyWiznetRunner) {
     runner.run().await
@@ -218,7 +227,7 @@ async fn zenoh_task(stack: Stack<'static>) {
 
     let cfg = AppConfig::new();
     let mut reconnect = ReconnectPolicy::default_policy();
-    let builder = cfg.zenoh.session.node_builder().name("rp2040_node");
+    let builder = cfg.zenoh.session.node_builder().name("pico2_node");
 
     let tcp_rx = TCP_RX_BUF.init([0u8; 4096]);
     let tcp_tx = TCP_TX_BUF.init([0u8; 4096]);
