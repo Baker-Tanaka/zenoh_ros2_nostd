@@ -23,6 +23,10 @@ pub enum EntityType {
     Publisher,
     /// Message subscriber.
     Subscriber,
+    /// Service server.
+    ServiceServer,
+    /// Service client.
+    ServiceClient,
 }
 
 impl EntityType {
@@ -31,6 +35,8 @@ impl EntityType {
         match self {
             Self::Publisher => "MP",
             Self::Subscriber => "MS",
+            Self::ServiceServer => "SS",
+            Self::ServiceClient => "SC",
         }
     }
 }
@@ -102,8 +108,9 @@ pub fn build_liveliness_token(
     s.push_str(type_hash).map_err(|_| ())?;
     s.push('/').map_err(|_| ())?;
 
-    // QoS
-    s.push_str(qos.to_liveliness_str()).map_err(|_| ())?;
+    // QoS (rmw_zenoh_cpp-compatible keyexpr encoding)
+    let qos_keyexpr = qos.to_rmw_qos_keyexpr()?;
+    s.push_str(qos_keyexpr.as_str()).map_err(|_| ())?;
 
     Ok(s)
 }
@@ -130,7 +137,8 @@ fn push_u32<const N: usize>(s: &mut String<N>, val: u32) -> Result<(), ()> {
 fn push_hex_byte<const N: usize>(s: &mut String<N>, byte: u8) -> Result<(), ()> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     s.push(HEX[(byte >> 4) as usize] as char).map_err(|_| ())?;
-    s.push(HEX[(byte & 0x0F) as usize] as char).map_err(|_| ())?;
+    s.push(HEX[(byte & 0x0F) as usize] as char)
+        .map_err(|_| ())?;
     Ok(())
 }
 
@@ -161,6 +169,8 @@ mod tests {
         assert!(token.contains("/mcu_node/"));
         assert!(token.contains("/cmd_vel/"));
         assert!(token.contains("/geometry_msgs::msg::Twist/"));
-        assert!(token.ends_with("/RV"));
+        // Qos::DEFAULT = reliable(1), volatile(2), keep_last(10)
+        // rmw format: all defaults except depth=10
+        assert!(token.ends_with("/::,10:,:,:,,"));
     }
 }

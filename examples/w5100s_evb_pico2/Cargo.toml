@@ -12,7 +12,10 @@ publish = false
 [dependencies]
 # Embassy async runtime — RP2040 (Cortex-M0+) platform
 # executor-thread only — executor-interrupt is not used.
-embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
+embassy-executor = { version = "0.10", features = [
+    "platform-cortex-m",
+    "executor-thread",
+] }
 
 # RP2350 HAL
 embassy-rp = { version = "0.10", features = [
@@ -62,18 +65,20 @@ cortex-m-rt = "0.7"
 portable-atomic = { version = "1", features = ["unsafe-assume-single-core"] }
 
 # zenoh-ros2-nostd library
-zenoh-ros2-nostd = { path = "../..", default-features = false, features = ["defmt"] }
+zenoh-ros2-nostd = { path = "../..", default-features = false, features = [
+    "defmt",
+] }
 
 [profile.dev]
 codegen-units = 1
 debug = true
 debug-assertions = true
-opt-level = "z"        # -Oz: size-optimised; safe to use for dev
+opt-level = "z"         # -Oz: size-optimised; safe to use for dev
 overflow-checks = true
 
 [profile.release]
 codegen-units = 1
-debug = true           # retain debug symbols for probe-rs stack traces
+debug = true             # retain debug symbols for probe-rs stack traces
 debug-assertions = false
 lto = "fat"
 opt-level = "z"

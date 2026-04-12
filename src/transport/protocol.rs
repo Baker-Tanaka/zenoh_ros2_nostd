@@ -104,6 +104,15 @@ pub mod frame_flag {
     pub const Z: u8 = 1 << 7;
 }
 
+pub mod fragment_flag {
+    /// Reliability: 0 = best-effort, 1 = reliable.
+    pub const R: u8 = 1 << 5;
+    /// More: 1 = more fragments follow, 0 = last fragment.
+    pub const M: u8 = 1 << 6;
+    /// More extensions follow.
+    pub const Z: u8 = 1 << 7;
+}
+
 // --- Network message IDs ---
 
 pub mod network_id {
@@ -121,6 +130,29 @@ pub mod push_flag {
     pub const N: u8 = 1 << 5;
     /// Mapping: sender's declared key ID is used for the scope.
     pub const M: u8 = 1 << 6;
+    /// More extensions follow.
+    pub const Z: u8 = 1 << 7;
+}
+
+pub mod request_flag {
+    /// Named: wire expression has a suffix string.
+    pub const N: u8 = 1 << 5;
+    /// Mapping: sender's declared key ID for scope.
+    pub const M: u8 = 1 << 6;
+    /// More extensions follow.
+    pub const Z: u8 = 1 << 7;
+}
+
+pub mod response_flag {
+    /// Named: wire expression has a suffix string.
+    pub const N: u8 = 1 << 5;
+    /// Mapping.
+    pub const M: u8 = 1 << 6;
+    /// More extensions follow.
+    pub const Z: u8 = 1 << 7;
+}
+
+pub mod response_final_flag {
     /// More extensions follow.
     pub const Z: u8 = 1 << 7;
 }
@@ -145,6 +177,32 @@ pub mod put_flag {
     pub const Z: u8 = 1 << 7;
 }
 
+pub mod query_flag {
+    /// Consolidation present.
+    pub const C: u8 = 1 << 5;
+    /// Parameters present.
+    pub const P: u8 = 1 << 6;
+    /// More extensions follow.
+    pub const Z: u8 = 1 << 7;
+}
+
+pub mod reply_flag {
+    /// Consolidation present.
+    pub const C: u8 = 1 << 5;
+    /// More extensions follow.
+    pub const Z: u8 = 1 << 7;
+}
+
+/// Query target modes for Request extension.
+pub mod query_target {
+    /// Best matching queryable.
+    pub const BEST_MATCHING: u64 = 0;
+    /// All queryables.
+    pub const ALL: u64 = 1;
+    /// All queryables, wait for all complete replies.
+    pub const ALL_COMPLETE: u64 = 2;
+}
+
 // --- Declaration IDs ---
 
 pub mod declare_id {
@@ -167,6 +225,15 @@ pub mod declare_keyexpr_flag {
 }
 
 pub mod declare_subscriber_flag {
+    /// Named: wire expression has a suffix string.
+    pub const N: u8 = 1 << 5;
+    /// Mapped: scope references a sender-declared key ID.
+    pub const M: u8 = 1 << 6;
+    /// More extensions follow.
+    pub const Z: u8 = 1 << 7;
+}
+
+pub mod declare_token_flag {
     /// Named: wire expression has a suffix string.
     pub const N: u8 = 1 << 5;
     /// Mapped: scope references a sender-declared key ID.

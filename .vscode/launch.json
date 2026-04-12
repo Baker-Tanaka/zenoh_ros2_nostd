@@ -41,27 +41,42 @@
                     "coreIndex": 0,
                     "programBinary": "${env:LOCAL_WORKSPACE_FOLDER}/examples/esp32c3_wifi/target/riscv32imc-unknown-none-elf/release/esp32c3-wifi",
                     "rttEnabled": true,
+                    "rttChannelFormats": [
+                        {
+                            "channelNumber": 0,
+                            "dataFormat": "String",
+                            "showTimestamps": true,
+                        }
+                    ],
                 }
             ],
-            "consoleLogLevel": "Info"
+            "consoleLogLevel": "Debug"
         },
         {
-            "preLaunchTask": "rp2040-w5500: build (debug)",
+            "preLaunchTask": "w5100s-evb-pico2: build (debug)",
             "type": "probe-rs-debug",
             "request": "launch",
-            "name": "RP2040 W5500 demo",
+            "name": "W5100S-EVB-Pico2 demo",
             "server": "host.docker.internal:50001",
             "speed": 4000,
-            "chip": "RP2040",
+            "chip": "RP235x",
             "flashingConfig": {
                 "flashingEnabled": true,
-                "haltAfterReset": true,
+                "haltAfterReset": false,
             },
             "coreConfigs": [
                 {
                     "coreIndex": 0,
-                    "programBinary": "${env:LOCAL_WORKSPACE_FOLDER}/examples/rp2040_w5500/target/thumbv6m-none-eabi/debug/rp2040-w5500",
+                    "programBinary": "${env:LOCAL_WORKSPACE_FOLDER}/examples/w5100s_evb_pico2/target/thumbv8m.main-none-eabihf/debug/w5100s-evb-pico2",
                     "rttEnabled": true,
+                    "rttChannelFormats": [
+                        {
+                            "channelNumber": 0,
+                            "dataFormat": "Defmt",
+                            "showTimestamps": true,
+                            "showLocation": true,
+                        }
+                    ],
                 }
             ],
             "consoleLogLevel": "Info"

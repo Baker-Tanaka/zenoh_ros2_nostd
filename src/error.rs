@@ -21,6 +21,8 @@ pub enum Error {
     Timeout,
     /// Invalid argument supplied.
     InvalidArgument,
+    /// Service call received no reply (ResponseFinal without Reply).
+    ServiceNoReply,
 }
 
 impl fmt::Display for Error {
@@ -34,6 +36,7 @@ impl fmt::Display for Error {
             Self::NotConnected => write!(f, "not connected"),
             Self::Timeout => write!(f, "timeout"),
             Self::InvalidArgument => write!(f, "invalid argument"),
+            Self::ServiceNoReply => write!(f, "service: no reply received"),
         }
     }
 }
@@ -128,6 +131,7 @@ impl defmt::Format for Error {
             Self::NotConnected => defmt::write!(f, "not connected"),
             Self::Timeout => defmt::write!(f, "timeout"),
             Self::InvalidArgument => defmt::write!(f, "invalid argument"),
+            Self::ServiceNoReply => defmt::write!(f, "service: no reply received"),
         }
     }
 }

@@ -452,6 +452,30 @@ pub fn decode_frame_header(buf: &[u8]) -> Result<(u64, bool, usize), TransportEr
     Ok((sn, reliable, pos))
 }
 
+/// Decode a Fragment header. Returns (sn, reliable, more, body_start_pos).
+///
+/// - `reliable`: true if the R flag is set (reliable channel).
+/// - `more`: true if the M flag is set (more fragments follow).
+/// - `body_start_pos`: index where the fragment payload begins.
+pub fn decode_fragment_header(buf: &[u8]) -> Result<(u64, bool, bool, usize), TransportError> {
+    if buf.is_empty() {
+        return Err(TransportError::InvalidEncoding);
+    }
+    let header = buf[0];
+    if header & 0x1F != transport_id::FRAGMENT {
+        return Err(TransportError::InvalidEncoding);
+    }
+    let reliable = header & fragment_flag::R != 0;
+    let more = header & fragment_flag::M != 0;
+    let has_ext = header & fragment_flag::Z != 0;
+    let (sn, n) = decode_vbyte(&buf[1..])?;
+    let mut pos = 1 + n;
+    if has_ext {
+        skip_extensions(buf, &mut pos)?;
+    }
+    Ok((sn, reliable, more, pos))
+}
+
 // ====== Push + Put (for publishing) ======
 
 /// Encode a Push + Put network message (inline key expression, no extensions).
@@ -871,6 +895,372 @@ pub fn encode_declare_subscriber_mapped(
     Ok(pos)
 }
 
+/// Encode a Declare Token message with an inline key expression.
+///
+/// Declares a liveliness token on the router.
+/// The token key expression is sent inline (scope=0 with suffix).
+pub fn encode_declare_token(
+    buf: &mut [u8],
+    token_id: u32,
+    key_expr: &str,
+) -> Result<usize, TransportError> {
+    let mut pos = 0;
+
+    // Network Declare header
+    if pos >= buf.len() {
+        return Err(TransportError::FrameTooLarge);
+    }
+    buf[pos] = network_id::DECLARE;
+    pos += 1;
+
+    // D_TOKEN | N (named, inline key expression with suffix)
+    if pos >= buf.len() {
+        return Err(TransportError::FrameTooLarge);
+    }
+    let header = declare_id::D_TOKEN
+        | if !key_expr.is_empty() {
+            declare_token_flag::N
+        } else {
+            0
+        };
+    buf[pos] = header;
+    pos += 1;
+
+    // Token ID
+    pos += encode_vbyte(&mut buf[pos..], token_id as u64)?;
+
+    // Wire expression: scope=0 (inline) + suffix
+    pos += encode_vbyte(&mut buf[pos..], 0)?;
+    if !key_expr.is_empty() {
+        pos += encode_string(&mut buf[pos..], key_expr)?;
+    }
+
+    Ok(pos)
+}
+
+/// Encode a Declare Token message referencing a mapped key ID.
+///
+/// Uses the M flag to reference a previously declared key expression by ID.
+pub fn encode_declare_token_mapped(
+    buf: &mut [u8],
+    token_id: u32,
+    key_id: u16,
+) -> Result<usize, TransportError> {
+    let mut pos = 0;
+
+    // Network Declare header
+    if pos >= buf.len() {
+        return Err(TransportError::FrameTooLarge);
+    }
+    buf[pos] = network_id::DECLARE;
+    pos += 1;
+
+    // D_TOKEN | M (mapped)
+    if pos >= buf.len() {
+        return Err(TransportError::FrameTooLarge);
+    }
+    buf[pos] = declare_id::D_TOKEN | declare_token_flag::M;
+    pos += 1;
+
+    // Token ID
+    pos += encode_vbyte(&mut buf[pos..], token_id as u64)?;
+
+    // WireExpr: scope = key_id (mapped), no suffix
+    pos += encode_vbyte(&mut buf[pos..], key_id as u64)?;
+
+    Ok(pos)
+}
+
+// ====== Request + Query (for service client) ======
+
+/// Encode a Request + Query network message for a service call.
+///
+/// This is used by a Zenoh service client (rmw_zenoh_cpp `get` call).
+/// The message contains:
+/// - Request header with Target=AllComplete extension
+/// - Query body with CDR-encoded service request + rmw_zenoh attachment
+///
+/// Wire format:
+/// ```text
+/// [Request header | N | Z][request_id][scope=0][suffix=key_expr]
+/// [Target ext (z64, id=4): AllComplete=2]
+/// [Query header | Z][QueryBody ext (zbuf, id=3, has_more=1)][encoding+payload]
+/// [Attachment ext (zbuf, id=5, no_more)][seq_num+timestamp+GID]
+/// ```
+pub fn encode_request_query(
+    buf: &mut [u8],
+    request_id: u32,
+    key_expr: &str,
+    payload: &[u8],
+    seq_num: i64,
+    timestamp_ns: i64,
+    gid: &ZenohId,
+) -> Result<usize, TransportError> {
+    let mut pos = 0;
+
+    // ── Request header ────────────────────────────────────────────────────
+    // N flag: named key expression (inline suffix)
+    // Z flag: Target extension follows
+    let req_header = network_id::REQUEST | request_flag::N | request_flag::Z;
+    if pos >= buf.len() {
+        return Err(TransportError::FrameTooLarge);
+    }
+    buf[pos] = req_header;
+    pos += 1;
+
+    // Request ID
+    pos += encode_vbyte(&mut buf[pos..], request_id as u64)?;
+
+    // WireExpr: scope=0 (inline) + suffix
+    pos += encode_vbyte(&mut buf[pos..], 0)?;
+    pos += encode_string(&mut buf[pos..], key_expr)?;
+
+    // ── Request extension: Target ─────────────────────────────────────────
+    // ZExtZ64: bits[7]=has_more=0, bits[6:5]=01(z64), bits[4:0]=0x04 → 0x24
+    const TARGET_EXT_HEADER: u8 = 0x24;
+    if pos >= buf.len() {
+        return Err(TransportError::FrameTooLarge);
+    }
+    buf[pos] = TARGET_EXT_HEADER;
+    pos += 1;
+    pos += encode_vbyte(&mut buf[pos..], query_target::ALL_COMPLETE)?;
+
+    // ── Query header (RequestBody) ────────────────────────────────────────
+    // Z flag: has extensions (QueryBody + Attachment)
+    // No C (consolidation), no P (parameters)
+    let query_header = zenoh_id::QUERY | query_flag::Z;
+    if pos >= buf.len() {
+        return Err(TransportError::FrameTooLarge);
+    }
+    buf[pos] = query_header;
+    pos += 1;
+
+    // ── Query extension: QueryBody (ext_id=3, zbuf, has_more=1) ──────────
+    // bits[7]=1(has_more), bits[6:5]=10(zbuf), bits[4:0]=0x03 → 0xC3
+    const QUERY_BODY_EXT_HEADER: u8 = 0xC3;
+    if pos >= buf.len() {
+        return Err(TransportError::FrameTooLarge);
+    }
+    buf[pos] = QUERY_BODY_EXT_HEADER;
+    pos += 1;
+
+    // QueryBody: encoding VByte(0) + payload bytes
+    // Total length = 1 (VByte(0) for default encoding) + payload.len()
+    let body_len = 1 + payload.len();
+    pos += encode_vbyte(&mut buf[pos..], body_len as u64)?;
+
+    // Encoding: VByte(id << 1 | schema_flag) — default CDR = 0
+    pos += encode_vbyte(&mut buf[pos..], 0)?;
+
+    // CDR payload
+    if pos + payload.len() > buf.len() {
+        return Err(TransportError::FrameTooLarge);
+    }
+    buf[pos..pos + payload.len()].copy_from_slice(payload);
+    pos += payload.len();
+
+    // ── Query extension: Attachment (ext_id=5, zbuf, no_more) ─────────────
+    // bits[7]=0(no_more), bits[6:5]=10(zbuf), bits[4:0]=0x05 → 0x45
+    const ATTACHMENT_EXT_HEADER: u8 = 0x45;
+    const ATTACHMENT_LEN: usize = 33;
+
+    if pos >= buf.len() {
+        return Err(TransportError::FrameTooLarge);
+    }
+    buf[pos] = ATTACHMENT_EXT_HEADER;
+    pos += 1;
+
+    pos += encode_vbyte(&mut buf[pos..], ATTACHMENT_LEN as u64)?;
+
+    if pos + ATTACHMENT_LEN > buf.len() {
+        return Err(TransportError::FrameTooLarge);
+    }
+
+    // seq_num: i64 LE
+    buf[pos..pos + 8].copy_from_slice(&seq_num.to_le_bytes());
+    pos += 8;
+
+    // timestamp_ns: i64 LE
+    buf[pos..pos + 8].copy_from_slice(&timestamp_ns.to_le_bytes());
+    pos += 8;
+
+    // GID length (always 16)
+    buf[pos] = 16;
+    pos += 1;
+
+    // GID: ZenohId zero-padded to 16 bytes
+    let gid_bytes = gid.as_bytes();
+    let gid_copy_len = gid_bytes.len().min(16);
+    buf[pos..pos + gid_copy_len].copy_from_slice(&gid_bytes[..gid_copy_len]);
+    for b in &mut buf[pos + gid_copy_len..pos + 16] {
+        *b = 0;
+    }
+    pos += 16;
+
+    Ok(pos)
+}
+
+// ====== Response + Reply decoding (for service client) ======
+
+/// A decoded incoming service reply from a Response+Reply message.
+#[derive(Debug)]
+pub struct IncomingReply<'a> {
+    /// Request ID that this reply corresponds to.
+    pub request_id: u32,
+    /// Key expression scope (0 = inline, >0 = declared key ID).
+    pub scope: u64,
+    /// Key expression suffix string (present when N flag set).
+    pub key_suffix: &'a str,
+    /// CDR payload of the service response.
+    pub payload: &'a [u8],
+}
+
+/// Result of decoding a network message in the Response family.
+#[derive(Debug)]
+pub enum ResponseMsg<'a> {
+    /// A service reply containing a CDR payload.
+    Reply(IncomingReply<'a>),
+    /// Signals that no more replies will arrive for a given request ID.
+    Final(u32),
+}
+
+/// Decode a Response or ResponseFinal network message from a Frame body.
+///
+/// Returns `ResponseMsg::Reply` for a service response with payload, or
+/// `ResponseMsg::Final` when the router signals no more replies.
+/// Returns `Ok(None)` if the message is not a Response/ResponseFinal.
+pub fn decode_response<'a>(
+    buf: &'a [u8],
+) -> Result<Option<(ResponseMsg<'a>, usize)>, TransportError> {
+    if buf.is_empty() {
+        return Ok(None);
+    }
+    let mut pos = 0;
+
+    let header = buf[pos];
+    pos += 1;
+    let msg_id = header & 0x1F;
+
+    // ── ResponseFinal ─────────────────────────────────────────────────────
+    if msg_id == network_id::RESPONSE_FINAL {
+        let has_ext = header & response_final_flag::Z != 0;
+        let (request_id, n) = decode_vbyte(&buf[pos..])?;
+        pos += n;
+        if has_ext {
+            skip_extensions(buf, &mut pos)?;
+        }
+        return Ok(Some((ResponseMsg::Final(request_id as u32), pos)));
+    }
+
+    // ── Response ──────────────────────────────────────────────────────────
+    if msg_id != network_id::RESPONSE {
+        return Ok(None);
+    }
+
+    let has_suffix = header & response_flag::N != 0;
+    let has_ext = header & response_flag::Z != 0;
+
+    // Request ID
+    let (request_id, n) = decode_vbyte(&buf[pos..])?;
+    pos += n;
+
+    // WireExpr: scope, then suffix if N flag
+    let (scope, n) = decode_vbyte(&buf[pos..])?;
+    pos += n;
+
+    let key_suffix = if has_suffix {
+        let (bytes, n) = decode_slice(&buf[pos..])?;
+        pos += n;
+        core::str::from_utf8(bytes).map_err(|_| TransportError::InvalidEncoding)?
+    } else {
+        ""
+    };
+
+    // Skip Response extensions (QoS, Timestamp, ResponderId)
+    if has_ext {
+        skip_extensions(buf, &mut pos)?;
+    }
+
+    // ── Reply (ResponseBody) ──────────────────────────────────────────────
+    if pos >= buf.len() {
+        return Err(TransportError::InvalidEncoding);
+    }
+    let reply_header = buf[pos];
+    pos += 1;
+
+    if reply_header & 0x1F != zenoh_id::REPLY {
+        return Ok(None); // Err or other ResponseBody — skip
+    }
+
+    let has_consolidation = reply_header & reply_flag::C != 0;
+    let has_ext = reply_header & reply_flag::Z != 0;
+
+    // Consolidation (if C flag)
+    if has_consolidation {
+        let (_, n) = decode_vbyte(&buf[pos..])?;
+        pos += n;
+    }
+
+    // Skip Reply extensions
+    if has_ext {
+        skip_extensions(buf, &mut pos)?;
+    }
+
+    // ── ReplyBody = PushBody = Put ────────────────────────────────────────
+    // The reply body has the same wire format as a Put inside a Push.
+    if pos >= buf.len() {
+        return Err(TransportError::InvalidEncoding);
+    }
+    let put_header = buf[pos];
+    pos += 1;
+
+    if put_header & 0x1F != zenoh_id::PUT {
+        return Ok(None); // Del or other — not a Put reply
+    }
+
+    let has_timestamp = put_header & put_flag::T != 0;
+    let has_encoding = put_header & put_flag::E != 0;
+    let has_ext = put_header & put_flag::Z != 0;
+
+    // Timestamp
+    if has_timestamp {
+        let (_, n) = decode_vbyte(&buf[pos..])?;
+        pos += n;
+        let (id_size, n) = decode_vbyte(&buf[pos..])?;
+        pos += n;
+        let id_size = id_size as usize;
+        if pos + id_size > buf.len() {
+            return Err(TransportError::InvalidEncoding);
+        }
+        pos += id_size;
+    }
+
+    // Encoding
+    if has_encoding {
+        let (_, n) = decode_vbyte(&buf[pos..])?;
+        pos += n;
+    }
+
+    // Extensions
+    if has_ext {
+        skip_extensions(buf, &mut pos)?;
+    }
+
+    // Payload
+    let (payload, n) = decode_slice(&buf[pos..])?;
+    pos += n;
+
+    Ok(Some((
+        ResponseMsg::Reply(IncomingReply {
+            request_id: request_id as u32,
+            scope,
+            key_suffix,
+            payload,
+        }),
+        pos,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1214,5 +1604,195 @@ mod tests {
         // We don't parse the full message here, but just verify total size is correct.
         // 33-byte attachment means GID is always 16 bytes regardless of ZenohId length.
         let _ = n;
+    }
+
+    #[test]
+    fn test_encode_declare_token_inline() {
+        let mut buf = [0u8; 256];
+        let token_key = "@ros2_lv/0/abcdef01/0/1/MP//node/topic/type/hash/RV";
+        let n = encode_declare_token(&mut buf, 1, token_key).unwrap();
+        assert!(n > 0);
+
+        // byte 0: DECLARE header
+        assert_eq!(buf[0], network_id::DECLARE);
+        // byte 1: D_TOKEN | N flag (inline key expression)
+        assert_eq!(buf[1], declare_id::D_TOKEN | declare_token_flag::N);
+        // byte 2: token_id = 1
+        assert_eq!(buf[2], 1);
+        // byte 3: scope = 0 (inline)
+        assert_eq!(buf[3], 0);
+    }
+
+    #[test]
+    fn test_encode_declare_token_mapped() {
+        let mut buf = [0u8; 64];
+        let n = encode_declare_token_mapped(&mut buf, 42, 7).unwrap();
+        assert!(n > 0);
+
+        assert_eq!(buf[0], network_id::DECLARE);
+        assert_eq!(buf[1], declare_id::D_TOKEN | declare_token_flag::M);
+        assert_eq!(buf[2], 42); // token_id
+        assert_eq!(buf[3], 7); // key_id (scope)
+    }
+
+    #[test]
+    fn test_decode_fragment_header_reliable_more() {
+        // Header: FRAGMENT | R (reliable) | M (more)
+        let header = transport_id::FRAGMENT | fragment_flag::R | fragment_flag::M;
+        let mut buf = [0u8; 16];
+        buf[0] = header;
+        // SN = 5 (VByte 1 byte)
+        buf[1] = 5;
+        // Fragment payload starts at byte 2
+
+        let (sn, reliable, more, body_pos) = decode_fragment_header(&buf[..8]).unwrap();
+        assert_eq!(sn, 5);
+        assert!(reliable);
+        assert!(more);
+        assert_eq!(body_pos, 2);
+    }
+
+    #[test]
+    fn test_decode_fragment_header_last_fragment() {
+        // Header: FRAGMENT | R — no M flag means last fragment
+        let header = transport_id::FRAGMENT | fragment_flag::R;
+        let mut buf = [0u8; 16];
+        buf[0] = header;
+        buf[1] = 10; // SN = 10
+
+        let (sn, reliable, more, body_pos) = decode_fragment_header(&buf[..8]).unwrap();
+        assert_eq!(sn, 10);
+        assert!(reliable);
+        assert!(!more); // last fragment
+        assert_eq!(body_pos, 2);
+    }
+
+    #[test]
+    fn test_decode_fragment_header_best_effort() {
+        // Best-effort fragment (no R flag), with more flag
+        let header = transport_id::FRAGMENT | fragment_flag::M;
+        let mut buf = [0u8; 16];
+        buf[0] = header;
+        buf[1] = 0; // SN = 0
+
+        let (sn, reliable, more, _) = decode_fragment_header(&buf[..8]).unwrap();
+        assert_eq!(sn, 0);
+        assert!(!reliable);
+        assert!(more);
+    }
+
+    #[test]
+    fn test_decode_fragment_header_wrong_id() {
+        let buf = [transport_id::FRAME]; // Not a FRAGMENT
+        assert!(decode_fragment_header(&buf).is_err());
+    }
+
+    #[test]
+    fn test_parse_transport_msg_kind_fragment() {
+        assert_eq!(
+            parse_transport_msg_kind(transport_id::FRAGMENT | fragment_flag::R | fragment_flag::M),
+            TransportMsgKind::Fragment
+        );
+    }
+
+    // ── Request/Response tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_encode_request_query_roundtrip() {
+        let gid = ZenohId::from_bytes(&[0xAA, 0xBB, 0xCC, 0xDD]);
+        let payload = [0x00, 0x01, 0x00, 0x00, 0x42]; // tiny CDR
+        let mut buf = [0u8; 512];
+
+        let n = encode_request_query(
+            &mut buf,
+            1,
+            "0/add_two_ints/example_interfaces::srv::dds_::AddTwoInts_Request_/RIHS01_abc123",
+            &payload,
+            1,
+            0,
+            &gid,
+        )
+        .unwrap();
+        assert!(n > 0);
+
+        // Verify Request header
+        assert_eq!(buf[0] & 0x1F, network_id::REQUEST);
+        assert_ne!(buf[0] & request_flag::N, 0); // N flag set
+        assert_ne!(buf[0] & request_flag::Z, 0); // Z flag set (extensions)
+    }
+
+    #[test]
+    fn test_encode_request_query_buffer_too_small() {
+        let gid = ZenohId::from_bytes(&[0x01]);
+        let payload = [0u8; 32];
+        let mut buf = [0u8; 10]; // too small
+        assert!(encode_request_query(&mut buf, 1, "0/svc/t/h", &payload, 1, 0, &gid).is_err());
+    }
+
+    #[test]
+    fn test_decode_response_final() {
+        // Hand-craft a ResponseFinal: [header=0x1a][request_id=VByte(7)]
+        let mut buf = [0u8; 8];
+        buf[0] = network_id::RESPONSE_FINAL; // no Z flag
+        let n = encode_vbyte(&mut buf[1..], 7).unwrap();
+        let total = 1 + n;
+
+        let result = decode_response(&buf[..total]).unwrap().unwrap();
+        match result.0 {
+            ResponseMsg::Final(rid) => assert_eq!(rid, 7),
+            _ => panic!("expected ResponseFinal"),
+        }
+    }
+
+    #[test]
+    fn test_decode_response_reply_with_put() {
+        // Build a minimal Response+Reply+Put message
+        let mut buf = [0u8; 256];
+        let mut pos = 0;
+
+        // Response header: N flag (has suffix), no Z (no extensions)
+        buf[pos] = network_id::RESPONSE | response_flag::N;
+        pos += 1;
+
+        // request_id = 42
+        pos += encode_vbyte(&mut buf[pos..], 42).unwrap();
+
+        // WireExpr: scope=0, suffix="0/svc"
+        pos += encode_vbyte(&mut buf[pos..], 0).unwrap();
+        pos += encode_string(&mut buf[pos..], "0/svc").unwrap();
+
+        // Reply header: no C, no Z
+        buf[pos] = zenoh_id::REPLY;
+        pos += 1;
+
+        // Put header: no flags
+        buf[pos] = zenoh_id::PUT;
+        pos += 1;
+
+        // Payload: VByte(4) + [0xDE, 0xAD, 0xBE, 0xEF]
+        pos += encode_slice(&mut buf[pos..], &[0xDE, 0xAD, 0xBE, 0xEF]).unwrap();
+
+        let result = decode_response(&buf[..pos]).unwrap().unwrap();
+        match result.0 {
+            ResponseMsg::Reply(reply) => {
+                assert_eq!(reply.request_id, 42);
+                assert_eq!(reply.scope, 0);
+                assert_eq!(reply.key_suffix, "0/svc");
+                assert_eq!(reply.payload, &[0xDE, 0xAD, 0xBE, 0xEF]);
+            }
+            _ => panic!("expected Reply"),
+        }
+    }
+
+    #[test]
+    fn test_decode_response_not_response_returns_none() {
+        // A Push header (not Response)
+        let buf = [network_id::PUSH | push_flag::N];
+        assert!(decode_response(&buf).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_decode_response_empty_returns_none() {
+        assert!(decode_response(&[]).unwrap().is_none());
     }
 }

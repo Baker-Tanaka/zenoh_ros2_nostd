@@ -1,0 +1,21 @@
+[package]
+name = "zenoh-ros2-nostd-derive"
+version = "1.0.0"
+edition = "2021"
+description = "Derive macro for ROS2 message types in zenoh-ros2-nostd"
+license = "Apache-2.0"
+repository = "https://github.com/Baker-Tanaka/zenoh_ros2_nostd"
+documentation = "https://docs.rs/zenoh-ros2-nostd-derive"
+homepage = "https://github.com/Baker-Tanaka/zenoh_ros2_nostd"
+readme = "../README.md"
+keywords = ["embedded", "no-std", "ros2", "zenoh", "derive"]
+categories = ["embedded", "no-std::no-alloc"]
+rust-version = "1.94"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

@@ -9,7 +9,11 @@
 //! ```ignore
 //! let cfg = AppConfig::new();
 //! socket.connect(cfg.zenoh.router_endpoint()).await?;
-//! let mut node = cfg.zenoh.session.node_builder().name("talker").open(socket).await?;
+//! let mut node = Node::builder("talker")
+//!     .zid(cfg.zenoh.session.zid)
+//!     .domain_id(cfg.zenoh.session.domain_id)
+//!     .build(socket)
+//!     .await?;
 //! ```
 
 use embassy_net::{IpEndpoint, Ipv4Address};

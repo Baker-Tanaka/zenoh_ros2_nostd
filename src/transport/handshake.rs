@@ -74,10 +74,7 @@ pub async fn client_handshake<T: Read + Write>(
     let n = frame::read_frame(link, rx_buf).await?;
     let (open_ack, _) = codec::decode_open_ack(&rx_buf[..n])?;
 
-    ros2_debug!(
-        "handshake: OpenAck received, lease={}ms",
-        open_ack.lease_ms
-    );
+    ros2_debug!("handshake: OpenAck received, lease={}ms", open_ack.lease_ms);
 
     Ok(HandshakeResult {
         router_zid: init_ack.zid,

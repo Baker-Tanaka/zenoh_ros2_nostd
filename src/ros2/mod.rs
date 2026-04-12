@@ -3,6 +3,7 @@
 pub mod config;
 pub mod keyexpr;
 pub mod liveliness;
+pub mod message_trait;
 pub mod msg;
 pub mod node;
 pub mod publisher;
@@ -11,7 +12,8 @@ pub mod subscription;
 
 pub use crate::session::ReconnectPolicy;
 pub use config::ZenohRos2Config;
-pub use keyexpr::TopicKeyExpr;
+pub use keyexpr::{ActionKeyExprs, TopicKeyExpr};
+pub use message_trait::RosMessage;
 pub use node::{Node, NodeBuilder};
 pub use publisher::{Publisher, PublisherDrain};
 pub use qos::{Durability, History, Qos, Reliability};

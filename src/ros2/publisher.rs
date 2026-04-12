@@ -19,6 +19,7 @@
 //! ```
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
 use serde::Serialize;
@@ -39,6 +40,17 @@ pub struct CdrPayload<const N: usize> {
     pub seq_num: i64,
     /// Nanoseconds since boot (used as approximate timestamp).
     pub timestamp_ns: i64,
+}
+
+/// Maximum CDR payload size for the retry slot (512 bytes).
+const RETRY_CDR_CAP: usize = 512;
+
+/// Compact retry payload stored in a blocking mutex for sync access.
+struct RetryPayload {
+    data: [u8; RETRY_CDR_CAP],
+    len: usize,
+    seq_num: i64,
+    timestamp_ns: i64,
 }
 
 // ── PublisherDrain — object-safe trait for Node routing ──────────────────────
@@ -62,6 +74,13 @@ pub trait PublisherDrain: Sync {
     ///
     /// **Precondition**: `out_buf.len()` must be `≥` the publisher's `CDR_CAP`.
     fn try_drain_into(&self, out_buf: &mut [u8]) -> Option<(usize, i64, i64)>;
+
+    /// Stash a CDR payload that couldn't be sent due to transport failure.
+    ///
+    /// The payload is saved in a single retry slot and will be drained first
+    /// on the next call to [`try_drain_into`](Self::try_drain_into).
+    /// If a retry payload already exists, the older one is silently dropped.
+    fn stash_retry(&self, data: &[u8], seq_num: i64, timestamp_ns: i64);
 }
 
 // ── Publisher ─────────────────────────────────────────────────────────────────
@@ -82,6 +101,8 @@ pub trait PublisherDrain: Sync {
 pub struct Publisher<M, const CDR_CAP: usize, const QUEUE: usize> {
     topic: TopicKeyExpr,
     channel: Channel<CriticalSectionRawMutex, CdrPayload<CDR_CAP>, QUEUE>,
+    /// Single retry slot for messages that failed to send (persists across reconnects).
+    retry_slot: BlockingMutex<CriticalSectionRawMutex, core::cell::RefCell<Option<RetryPayload>>>,
     /// Per-publisher sequence counter (rmw_zenoh_cpp attachment requirement).
     seq_num: Mutex<CriticalSectionRawMutex, i64>,
     _phantom: core::marker::PhantomData<fn(M) -> M>,
@@ -93,6 +114,7 @@ impl<M: Serialize, const CDR_CAP: usize, const QUEUE: usize> Publisher<M, CDR_CA
         Self {
             topic,
             channel: Channel::new(),
+            retry_slot: BlockingMutex::new(core::cell::RefCell::new(None)),
             seq_num: Mutex::new(0),
             _phantom: core::marker::PhantomData,
         }
@@ -180,9 +202,32 @@ impl<M: Serialize, const CDR_CAP: usize, const QUEUE: usize> PublisherDrain
     }
 
     fn try_drain_into(&self, out_buf: &mut [u8]) -> Option<(usize, i64, i64)> {
+        // Check retry slot first (message from a failed send attempt).
+        let retry = self.retry_slot.lock(|cell| cell.borrow_mut().take());
+        if let Some(rp) = retry {
+            let n = rp.len.min(out_buf.len());
+            out_buf[..n].copy_from_slice(&rp.data[..n]);
+            return Some((n, rp.seq_num, rp.timestamp_ns));
+        }
+
+        // Then drain from the normal channel.
         let payload = self.channel.try_receive().ok()?;
         let n = payload.data.len().min(out_buf.len());
         out_buf[..n].copy_from_slice(&payload.data[..n]);
         Some((n, payload.seq_num, payload.timestamp_ns))
+    }
+
+    fn stash_retry(&self, data: &[u8], seq_num: i64, timestamp_ns: i64) {
+        let len = data.len().min(RETRY_CDR_CAP);
+        let mut buf = [0u8; RETRY_CDR_CAP];
+        buf[..len].copy_from_slice(&data[..len]);
+        self.retry_slot.lock(|cell| {
+            *cell.borrow_mut() = Some(RetryPayload {
+                data: buf,
+                len,
+                seq_num,
+                timestamp_ns,
+            });
+        });
     }
 }

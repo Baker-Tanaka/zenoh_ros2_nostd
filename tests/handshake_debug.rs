@@ -2,6 +2,8 @@
 //!
 //! cargo test --no-default-features --test handshake_debug -- --ignored --nocapture
 
+#![cfg(not(target_arch = "wasm32"))]
+
 use embedded_io_adapters::tokio_1::FromTokio;
 use std::time::Duration;
 use tokio::net::TcpStream;

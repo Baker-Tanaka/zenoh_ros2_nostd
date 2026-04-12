@@ -95,6 +95,111 @@ pub fn build_topic_key_expr(
     Ok(s)
 }
 
+/// Key expressions for all five sub-entities of a ROS2 action.
+///
+/// A ROS2 action is composed of three services and two topics:
+/// - `_action/send_goal` — service (request/response)
+/// - `_action/cancel_goal` — service (request/response)
+/// - `_action/get_result` — service (request/response)
+/// - `_action/feedback` — topic (subscription)
+/// - `_action/status` — topic (subscription)
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use zenoh_ros2_nostd::ros2::keyexpr::ActionKeyExprs;
+///
+/// const NAV_ACTION: ActionKeyExprs = ActionKeyExprs::new(
+///     0,  // domain_id
+///     "navigate_to_pose/_action/send_goal",
+///     "nav2_msgs::action::dds_::NavigateToPose_SendGoal_",
+///     "RIHS01_send_goal_hash",
+///     "navigate_to_pose/_action/cancel_goal",
+///     "navigate_to_pose/_action/get_result",
+///     "nav2_msgs::action::dds_::NavigateToPose_GetResult_",
+///     "RIHS01_get_result_hash",
+///     "navigate_to_pose/_action/feedback",
+///     "nav2_msgs::action::dds_::NavigateToPose_FeedbackMessage_",
+///     "RIHS01_feedback_hash",
+///     "navigate_to_pose/_action/status",
+/// );
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct ActionKeyExprs {
+    /// `_action/send_goal` service key expression.
+    pub send_goal: TopicKeyExpr,
+    /// `_action/cancel_goal` service key expression.
+    pub cancel_goal: TopicKeyExpr,
+    /// `_action/get_result` service key expression.
+    pub get_result: TopicKeyExpr,
+    /// `_action/feedback` topic key expression.
+    pub feedback: TopicKeyExpr,
+    /// `_action/status` topic key expression.
+    pub status: TopicKeyExpr,
+}
+
+impl ActionKeyExprs {
+    /// Create action key expressions with full control over all type names and hashes.
+    ///
+    /// Uses standard `action_msgs` types for `cancel_goal` and `status`.
+    /// For `send_goal`, `get_result`, and `feedback`, the user provides
+    /// action-specific type names and hashes.
+    ///
+    /// Topic names should include the `_action/<sub>` suffix, e.g.:
+    /// - `"navigate_to_pose/_action/send_goal"`
+    /// - `"navigate_to_pose/_action/cancel_goal"`
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new(
+        domain_id: u32,
+        // send_goal
+        send_goal_topic: &'static str,
+        send_goal_type: &'static str,
+        send_goal_hash: &'static str,
+        // cancel_goal (uses standard action_msgs type)
+        cancel_goal_topic: &'static str,
+        // get_result
+        get_result_topic: &'static str,
+        get_result_type: &'static str,
+        get_result_hash: &'static str,
+        // feedback
+        feedback_topic: &'static str,
+        feedback_type: &'static str,
+        feedback_hash: &'static str,
+        // status (uses standard action_msgs type)
+        status_topic: &'static str,
+    ) -> Self {
+        use super::msg::action_msgs::{CancelGoalType, GoalStatusArrayType};
+
+        Self {
+            send_goal: TopicKeyExpr::new(
+                domain_id,
+                send_goal_topic,
+                send_goal_type,
+                send_goal_hash,
+            ),
+            cancel_goal: TopicKeyExpr::new(
+                domain_id,
+                cancel_goal_topic,
+                CancelGoalType::TYPE_NAME,
+                CancelGoalType::TYPE_HASH,
+            ),
+            get_result: TopicKeyExpr::new(
+                domain_id,
+                get_result_topic,
+                get_result_type,
+                get_result_hash,
+            ),
+            feedback: TopicKeyExpr::new(domain_id, feedback_topic, feedback_type, feedback_hash),
+            status: TopicKeyExpr::new(
+                domain_id,
+                status_topic,
+                GoalStatusArrayType::TYPE_NAME,
+                GoalStatusArrayType::TYPE_HASH,
+            ),
+        }
+    }
+}
+
 // ---- Helpers (no core::fmt::Write needed, avoiding alloc) ----
 
 fn push_str<const N: usize>(s: &mut String<N>, val: &str) -> Result<(), ()> {
@@ -183,5 +288,44 @@ mod tests {
             result.as_str(),
             "0/joint_states/sensor_msgs::msg::dds_::JointState_/RIHS01_abc"
         );
+    }
+
+    #[test]
+    fn test_action_key_exprs() {
+        let action = ActionKeyExprs::new(
+            0,
+            "navigate/_action/send_goal",
+            "my_pkg::action::dds_::Nav_SendGoal_",
+            "RIHS01_sg",
+            "navigate/_action/cancel_goal",
+            "navigate/_action/get_result",
+            "my_pkg::action::dds_::Nav_GetResult_",
+            "RIHS01_gr",
+            "navigate/_action/feedback",
+            "my_pkg::action::dds_::Nav_FeedbackMessage_",
+            "RIHS01_fb",
+            "navigate/_action/status",
+        );
+
+        let sg = action.send_goal.to_key_expr().unwrap();
+        assert!(sg
+            .as_str()
+            .starts_with("0/navigate/_action/send_goal/my_pkg::action::dds_::Nav_SendGoal_/"));
+
+        let cg = action.cancel_goal.to_key_expr().unwrap();
+        assert!(cg.as_str().contains("action_msgs::srv::dds_::CancelGoal_"));
+
+        let gr = action.get_result.to_key_expr().unwrap();
+        assert!(gr
+            .as_str()
+            .starts_with("0/navigate/_action/get_result/my_pkg::action::dds_::Nav_GetResult_/"));
+
+        let fb = action.feedback.to_key_expr().unwrap();
+        assert!(fb.as_str().contains("Nav_FeedbackMessage_"));
+
+        let st = action.status.to_key_expr().unwrap();
+        assert!(st
+            .as_str()
+            .contains("action_msgs::msg::dds_::GoalStatusArray_"));
     }
 }

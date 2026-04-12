@@ -28,7 +28,7 @@
 //! ```text
 //! ethernet_task  — drives W5100S SPI packet I/O
 //! net_task       — embassy-net stack runner
-//! zenoh_task     — NodeBuilder::open(socket) → node.spin() → reconnect
+//! zenoh_task     — Node::builder().build(socket) → node.spin() → reconnect
 //! app_task       — CHATTER_PUB.send(&msg) every 5 s; CHATTER_SUB.try_recv()
 //! ```
 
@@ -58,7 +58,7 @@ use portable_atomic::{AtomicU32, Ordering};
 use serde::{Deserialize, Serialize};
 use static_cell::StaticCell;
 use zenoh_ros2_nostd::cdr::cdr_cap_for_string;
-use zenoh_ros2_nostd::ros2::{msg, Publisher, ReconnectPolicy, Subscription};
+use zenoh_ros2_nostd::prelude::*;
 
 // DMA_IRQ_0 handles all DMA channels — required for async SPI.
 bind_interrupts!(struct Irqs {
@@ -69,7 +69,7 @@ bind_interrupts!(struct Irqs {
 ///
 /// Built from the verified `msg::std_msgs::String` constants — no hand-typed
 /// type hash or type name; typos are caught at compile time.
-const CHATTER_TOPIC: zenoh_ros2_nostd::ros2::TopicKeyExpr = msg::std_msgs::String::CHATTER;
+const CHATTER_TOPIC: TopicKeyExpr = msg::std_msgs::String::CHATTER;
 
 /// `std_msgs/String` message type.
 #[derive(Serialize, Deserialize, Debug)]
@@ -125,6 +125,15 @@ async fn main(spawner: Spawner) {
     static WIZNET_STATE: StaticCell<WiznetState<4, 4>> = StaticCell::new();
 
     let p = embassy_rp::init(Default::default());
+
+    // ── RTT early init ──────────────────────────────────────────────────────
+    // Trigger defmt-rtt initialization immediately so that the "SEGGER RTT"
+    // magic string is written into the control block.  Then wait 500 ms to
+    // give probe-rs time to detect RTT before the real log output begins.
+    // Without this delay, probe-rs may miss the control-block and silently
+    // skip RTT setup — resulting in "flash OK, but no RTT" symptoms.
+    defmt::trace!("RTT control block init");
+    Timer::after(Duration::from_millis(500)).await;
 
     // Report the panic count from the previous run.  A non-zero count means
     // the firmware hit a `panic!` (or assertion) and reset.  When probe-rs is
@@ -211,27 +220,24 @@ async fn net_task(mut runner: NetRunner<'static, WiznetDevice<'static>>) {
 ///
 /// 1. Wait for DHCP.
 /// 2. Open a TCP connection to the Zenoh router.
-/// 3. Build a `Node` via `NodeBuilder::open(socket)` — transport-agnostic.
+/// 3. Build a `Node` via `Node::builder().build(socket)` — transport-agnostic.
 /// 4. Register publishers and declare subscribers.
 /// 5. Run `node.spin()` until the connection drops.
 /// 6. Exponential back-off, then retry from step 1.
 ///
 /// **Transport independence**: replace only the TCP socket creation block
-/// (before `node_builder().open(socket)`) to use WiFi, USB CDC, or any
+/// (before `Node::builder().build(socket)`) to use WiFi, USB CDC, or any
 /// `Read + Write` transport.  Steps 3–6 remain unchanged.
 #[embassy_executor::task]
 async fn zenoh_task(stack: Stack<'static>) {
     static TCP_RX_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
     static TCP_TX_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
-    static ZENOH_RX_BUF: StaticCell<[u8; 4096]> = StaticCell::new();
 
     let cfg = AppConfig::new();
     let mut reconnect = ReconnectPolicy::default_policy();
-    let builder = cfg.zenoh.session.node_builder().name("pico2_node");
 
     let tcp_rx = TCP_RX_BUF.init([0u8; 4096]);
     let tcp_tx = TCP_TX_BUF.init([0u8; 4096]);
-    let rx_buf = ZENOH_RX_BUF.init([0u8; 4096]);
 
     loop {
         wait_for_dhcp(stack).await;
@@ -259,7 +265,12 @@ async fn zenoh_task(stack: Stack<'static>) {
             }
         }
 
-        let mut node = match builder.open(socket).await {
+        let mut node = match NodeBuilder::new("pico2_node")
+            .zid(cfg.zenoh.session.zid)
+            .domain_id(cfg.zenoh.session.domain_id)
+            .build(socket)
+            .await
+        {
             Ok(n) => n,
             Err(e) => {
                 error!("[zenoh] Handshake failed: {}", e);
@@ -268,7 +279,11 @@ async fn zenoh_task(stack: Stack<'static>) {
             }
         };
 
-        node.register_publisher(CHATTER_PUB.as_drain());
+        if let Err(e) = node.register_static_publisher(&CHATTER_PUB).await {
+            error!("[zenoh] Publisher registration failed: {}", e);
+            reconnect.wait_and_advance().await;
+            continue;
+        }
 
         // Clear stale messages from the previous session before re-subscribing.
         // Without this, messages received before the disconnect would be delivered
@@ -276,7 +291,7 @@ async fn zenoh_task(stack: Stack<'static>) {
         CHATTER_SUB.clear();
 
         if let Err(e) = node
-            .subscribe(CHATTER_TOPIC, CHATTER_SUB.as_dispatch())
+            .subscribe_with_dispatch(CHATTER_TOPIC, &CHATTER_SUB)
             .await
         {
             error!("[zenoh] Subscribe failed: {}", e);
@@ -286,7 +301,7 @@ async fn zenoh_task(stack: Stack<'static>) {
 
         info!("[zenoh] Node '{}' ready.", node.node_name());
 
-        node.spin_and_backoff(rx_buf, &mut reconnect).await;
+        node.spin_and_backoff(&mut reconnect).await;
         warn!(
             "[zenoh] Session ended — reconnecting (attempt #{}).",
             reconnect.attempt()
@@ -308,7 +323,7 @@ async fn app_task() {
         let mut data: String<128> = String::new();
         let _ = core::fmt::write(
             &mut data,
-            core::format_args!("Hello from RP2040! count={}", counter),
+            core::format_args!("Hello from Pico2! count={}", counter),
         );
         counter += 1;
 

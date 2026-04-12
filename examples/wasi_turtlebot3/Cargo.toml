@@ -1,0 +1,30 @@
+[package]
+name = "wasi-turtlebot3"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Usage:
+#   Host (native):  cargo run
+#   WASI:           cargo build --target wasm32-wasip1
+
+[features]
+default = []
+wasi = ["zenoh-ros2-nostd/wasi"]
+
+[dependencies]
+zenoh-ros2-nostd = { path = "../..", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+embedded-io-async = "0.6"
+heapless = "0.8"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["net", "rt", "macros", "time"] }
+embedded-io-adapters = { version = "0.6", features = ["tokio-1"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+lto = true
+opt-level = "s"

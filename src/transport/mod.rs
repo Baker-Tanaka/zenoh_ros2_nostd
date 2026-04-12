@@ -1,6 +1,7 @@
 //! Zenoh transport layer — wire protocol, TCP framing, and connection management.
 
 pub mod codec;
+pub mod fragment;
 pub mod frame;
 pub mod handshake;
 pub mod keepalive;

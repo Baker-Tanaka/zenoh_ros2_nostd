@@ -2,7 +2,48 @@
 
 ## Overview
 
-組み込みMCU向け `no_std` ROS2トピックpub/subライブラリ。Zenohプロトコル v8 上でCDRシリアライゼーションを用い、`rmw_zenoh_cpp` が動作するROS2ノードと通信する。
+組み込みMCU + WASI 向け `no_std` ROS2 通信ライブラリ。Zenohプロトコル v9 上でCDRシリアライゼーションを用い、`rmw_zenoh_cpp` が動作するROS2ノードと通信する。
+
+### ターゲット
+
+| Target | Transport | 用途 |
+|--------|-----------|------|
+| MCU (Cortex-M, RISC-V) | embedded-io-async TCP | 実機ロボット制御 |
+| WASI (wasm32-wasip1/wasip2) | WASI socket TCP | Gazebo シミュレーション連携 |
+| Host (x86_64) | tokio + embedded-io-adapters | テスト・統合テスト |
+
+## SDK API 設計方針
+
+**rclpy ライクな高レベル API** を公開インターフェースとする。詳細は `docs/DESIGN.md` 参照。
+
+### 2つのスタイル
+
+**A. コールバック関数方式:**
+```rust
+let mut node = Node::builder("talker").build(transport).await?;
+node.create_subscription::<StringMsg>("chatter", QoS::default(), |msg| { /* ... */ });
+node.spin().await;
+```
+
+**B. トレイト実装方式:**
+```rust
+struct MyNode { /* state */ }
+impl NodeCallbacks for MyNode {
+    fn on_init(&mut self, ctx: &mut NodeContext) { /* register pub/sub */ }
+    fn on_message(&mut self, topic: &str, payload: &[u8]) { /* ... */ }
+}
+```
+
+### レイヤー可視性
+
+| Layer | Visibility | Notes |
+|-------|-----------|-------|
+| `sdk/` | `pub` | 唯一の公開インターフェース |
+| `ros2/` | `pub(crate)` | 内部: key expression, QoS, liveliness |
+| `session/` | `pub(crate)` | 内部: セッション管理 |
+| `transport/` | `pub(crate)` | 内部: Zenoh v9 プロトコル |
+| `buf/`, `cdr/` | `pub(crate)` | 内部: バッファ・シリアライゼーション |
+| `wasi/` | `pub(crate)` | 内部: WASI 固有アダプタ (`wasi` feature 時のみ) |
 
 ## ROS2 + rmw_zenoh_cpp 通信アーキテクチャ
 
@@ -52,17 +93,21 @@
 
 ```
 src/
-├── buf/        # Static buffer pool (heapless)
-├── cdr/        # CDR LE serialization (custom serde impl)
-├── transport/  # Zenoh protocol v8 wire format, framing, handshake
-├── session/    # Session state machine, pub/sub handles, reconnect
-├── ros2/       # ROS2 adaptation: key expressions, QoS, Node, TopicPub/Sub
+├── sdk/        # PUBLIC: rclpy-like high-level API (Node, PublisherHandle, etc.)
+├── ros2/       # internal: ROS2 adaptation (key expressions, QoS, liveliness)
+├── session/    # internal: Session state machine, pub/sub handles, reconnect
+├── transport/  # internal: Zenoh protocol v9 wire format, framing, handshake
+├── buf/        # internal: Static buffer pool (heapless)
+├── cdr/        # internal: CDR LE serialization (custom serde impl)
+├── wasi/       # internal: WASI socket/time adapters (feature-gated)
 ├── error.rs    # Hierarchical error types
-└── logging.rs  # defmt/log macro abstraction
+├── logging.rs  # defmt/log macro abstraction
+└── prelude.rs  # convenience re-exports
 ```
 
 - 各モジュールは `mod.rs` + 個別ファイルで構成し、`pub use` で再エクスポート
-- レイヤー依存: `ros2` → `session` → `transport` → `buf`/`cdr`
+- レイヤー依存: `sdk` → `ros2` → `session` → `transport` → `buf`/`cdr`
+- `sdk/` が唯一の公開 API。内部モジュールは `pub(crate)` に降格
 
 ## Code Style
 
@@ -96,11 +141,13 @@ docker compose down
 ## Conventions
 
 - **Feature gating**: `defmt`（デフォルト）と `log` は排他。`#[cfg(feature = "defmt")]` で条件分岐
+- **WASI feature**: `#[cfg(feature = "wasi")]` で WASI 固有コード（socket adapter, time driver）をゲート
 - **Protocol constants**: `pub mod transport_id { ... }` 形式でネストされたモジュール内に定義
 - **Key expression format**: `<domain_id>/<fully_qualified_name>/<type_name>/<type_hash>` (rmw_zenoh_cpp互換)
   - `type_name` はDDS慣例: `pkg::msg::dds_::TypeName_`
 - **CDR**: Little Endian固定、encapsulation header `[0x00, 0x01, 0x00, 0x00]`
 - **テストは `#[cfg(test)] mod tests` で各ファイル末尾に配置**
+- **公開 API は `sdk/` モジュールのみ**。内部モジュールの型を直接 `pub` しない
 
 ## ESP32-C3 実装 (examples/esp32c3_wifi)
 

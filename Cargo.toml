@@ -1,9 +1,25 @@
+[workspace]
+members = [".", "derive"]
+exclude = [
+    "examples/esp32c3_wifi",
+    "examples/w5100s_evb_pico2",
+    "examples/wasi_turtlebot3",
+    "examples/wasi_chatter_class",
+]
+
 [package]
 name = "zenoh-ros2-nostd"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "no_std ROS2 topic pub/sub over Zenoh for embedded systems with embassy"
 license = "Apache-2.0"
+repository = "https://github.com/Baker-Tanaka/zenoh_ros2_nostd"
+documentation = "https://docs.rs/zenoh-ros2-nostd"
+homepage = "https://github.com/Baker-Tanaka/zenoh_ros2_nostd"
+readme = "README.md"
+keywords = ["embedded", "no-std", "ros2", "zenoh", "wasi"]
+categories = ["embedded", "asynchronous", "network-programming", "no-std"]
+rust-version = "1.94"
 
 [lib]
 name = "zenoh_ros2_nostd"
@@ -13,6 +29,8 @@ default = ["defmt"]
 defmt = ["dep:defmt", "embassy-sync/defmt", "embassy-time/defmt"]
 log = ["dep:log"]
 alloc = []
+wasi = []
+derive = ["dep:zenoh-ros2-nostd-derive"]
 
 [dependencies]
 # Core (no_std)
@@ -22,11 +40,18 @@ embedded-io-async = "0.6"
 embassy-sync = { version = "0.8", default-features = false }
 embassy-time = { version = "0.5", default-features = false }
 
+# Derive macro (optional)
+zenoh-ros2-nostd-derive = { version = "1.0.0", path = "derive", optional = true }
+
 # Logging (optional — user chooses defmt or log)
 defmt = { version = "1.0", optional = true }
 log = { version = "0.4", optional = true }
 
 [dev-dependencies]
+# Used by unit tests on host and wasm targets.
+critical-section = { version = "1", features = ["std"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { version = "1", features = [
     "macros",
     "rt-multi-thread",
@@ -35,9 +60,6 @@ tokio = { version = "1", features = [
     "process",
 ] }
 embedded-io-adapters = { version = "0.6", features = ["tokio-1"] }
-# Provides _critical_section_1_0_acquire/release symbols for host builds
-# that use embassy_sync::Mutex<CriticalSectionRawMutex, _>.
-critical-section = { version = "1", features = ["std"] }
 
 # cargo build/run
 [profile.dev]
