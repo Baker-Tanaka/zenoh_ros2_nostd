@@ -112,11 +112,6 @@ mod tests {
         angular: Vector3,
     }
 
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    struct StdString {
-        data: heapless::String<256>,
-    }
-
     #[test]
     fn test_roundtrip_twist() {
         let msg = Twist {
