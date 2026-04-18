@@ -1,6 +1,7 @@
 [workspace]
 members = [".", "derive"]
 exclude = [
+    "examples/bakerlink_wiz630io",
     "examples/esp32c3_wifi",
     "examples/w5100s_evb_pico2",
     "examples/wasi_turtlebot3",

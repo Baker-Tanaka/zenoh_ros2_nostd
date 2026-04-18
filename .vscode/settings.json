@@ -3,8 +3,8 @@
     "rust-analyzer.check.allTargets": false,
     "rust-analyzer.linkedProjects": [
         "Cargo.toml",
-        "examples/rp2040_w5500/Cargo.toml",
-        "examples/esp32c3_wifi/Cargo.toml"
+        "examples/esp32c3_wifi/Cargo.toml",
+        "examples/bakerlink_wiz630io/Cargo.toml"
     ],
     "editor.formatOnSave": true
 }

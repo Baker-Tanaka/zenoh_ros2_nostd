@@ -6,7 +6,7 @@ Usage (dev container):
     python3 verify_sub.py localhost:7447    # custom address
     ZENOH_ROUTER_ADDR=host:7447 python3 verify_sub.py
 
-Run this first, then flash the W5100S-EVB-Pico2 via `cargo run --release`
+Run this first, then flash the Baker link.dev via `cargo run --release`
 on the host.  Messages should appear within ~10 s (DHCP + handshake).
 """
 

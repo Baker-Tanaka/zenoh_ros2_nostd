@@ -53,21 +53,21 @@
             "consoleLogLevel": "Debug"
         },
         {
-            "preLaunchTask": "w5100s-evb-pico2: build (debug)",
+            "preLaunchTask": "bakerlink-wiz630io: build (debug)",
             "type": "probe-rs-debug",
             "request": "launch",
-            "name": "W5100S-EVB-Pico2 demo",
+            "name": "Baker link.dev + WIZ630io demo",
             "server": "host.docker.internal:50001",
             "speed": 4000,
-            "chip": "RP235x",
+            "chip": "RP2040",
             "flashingConfig": {
                 "flashingEnabled": true,
-                "haltAfterReset": false,
+                "haltAfterReset": true,
             },
             "coreConfigs": [
                 {
                     "coreIndex": 0,
-                    "programBinary": "${env:LOCAL_WORKSPACE_FOLDER}/examples/w5100s_evb_pico2/target/thumbv8m.main-none-eabihf/debug/w5100s-evb-pico2",
+                    "programBinary": "${env:LOCAL_WORKSPACE_FOLDER}/examples/bakerlink_wiz630io/target/thumbv6m-none-eabi/debug/bakerlink-wiz630io",
                     "rttEnabled": true,
                     "rttChannelFormats": [
                         {
@@ -79,6 +79,12 @@
                     ],
                 }
             ],
+            // "pathMappings": [
+            //     {
+            //         "remoteRoot": "{{project-name}}",
+            //         "localRoot": "${env:LOCAL_WORKSPACE_FOLDER}"
+            //     }
+            // ],
             "consoleLogLevel": "Info"
         }
     ]

@@ -29,9 +29,9 @@ const ZENOH_ROUTER_ADDR_STR: &str = env!("ZENOH_ROUTER_ADDR");
 ///
 /// ⚠️ Using the same ZenohId on two devices causes routing conflicts in the
 /// Zenoh network.  Replace with the board's unique UID:
-/// - RP2040 chip ID is at address `0x40130084` (64-bit, accessible via QSPI RUID)
+/// - RP2040 chip ID is accessible via QSPI RUID command
 /// - Use the lower 8 bytes as ZenohId to guarantee uniqueness
-const DEVICE_ZID_BYTES: [u8; 8] = [0xC0, 0xFF, 0xEE, 0x00, 0x02, 0x04, 0x00, 0x01]; // REPLACE
+const DEVICE_ZID_BYTES: [u8; 8] = [0xBA, 0xCE, 0x01, 0x00, 0x06, 0x30, 0x00, 0x01]; // REPLACE
 
 // ── Config structs ────────────────────────────────────────────────────────────
 
@@ -84,8 +84,8 @@ fn parse_router_addr(addr: &str) -> ([u8; 4], u16) {
         .expect("ZENOH_ROUTER_ADDR: missing ':'.  Expected format: \"a.b.c.d:port\"");
     let (ip_str, port_str) = (&addr[..colon], &addr[colon + 1..]);
 
-    let port = parse_u16(port_str)
-        .expect("ZENOH_ROUTER_ADDR: invalid port number (must be 1–65535)");
+    let port =
+        parse_u16(port_str).expect("ZENOH_ROUTER_ADDR: invalid port number (must be 1–65535)");
 
     let mut octets = [0u8; 4];
     let mut count = 0usize;
@@ -98,10 +98,12 @@ fn parse_router_addr(addr: &str) -> ([u8; 4], u16) {
         tmp = &tmp[dot + 1..];
     }
     assert!(count < 4, "ZENOH_ROUTER_ADDR: too many IP octets");
-    octets[count] =
-        parse_u8(tmp).expect("ZENOH_ROUTER_ADDR: invalid IP octet (must be 0–255)");
+    octets[count] = parse_u8(tmp).expect("ZENOH_ROUTER_ADDR: invalid IP octet (must be 0–255)");
     count += 1;
-    assert!(count == 4, "ZENOH_ROUTER_ADDR: IP must have exactly 4 octets");
+    assert!(
+        count == 4,
+        "ZENOH_ROUTER_ADDR: IP must have exactly 4 octets"
+    );
 
     (octets, port)
 }

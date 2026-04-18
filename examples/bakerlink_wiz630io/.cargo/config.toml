@@ -1,0 +1,11 @@
+[build]
+target = "thumbv6m-none-eabi"
+
+[unstable]
+build-std = ["alloc", "core", "compiler_builtins"]
+
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+runner = "probe-rs run --chip RP2040 --protocol swd"
+
+[env]
+DEFMT_LOG = "debug"

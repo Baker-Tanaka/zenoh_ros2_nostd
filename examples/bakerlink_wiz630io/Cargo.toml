@@ -1,11 +1,13 @@
+[workspace]
+
 [package]
-name = "w5100s-evb-pico2"
+name = "bakerlink-wiz630io"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 # Run with:
-#   cd examples/w5100s_evb_pico2
+#   cd examples/bakerlink_wiz630io
 #   cp config.json.example config.json      # edit router_addr
 #   cargo run --release
 
@@ -17,12 +19,13 @@ embassy-executor = { version = "0.10", features = [
     "executor-thread",
 ] }
 
-# RP2350 HAL
+# RP2040 HAL
 embassy-rp = { version = "0.10", features = [
-    "rp235xa",
+    "rp2040",
     "unstable-pac",
     "time-driver",
     "critical-section-impl",
+    "boot2-generic-03h",
 ] }
 
 # TCP/IP networking stack
@@ -40,6 +43,9 @@ embassy-time = "0.5"
 
 # Shared SPI bus helper (wraps Spi + CS into one peripheral)
 embedded-hal-bus = { version = "0.2", features = ["async"] }
+
+# Async SPI/I2C trait definitions (provides SpiDevice::transfer_in_place)
+embedded-hal-async = "1.0"
 
 # Async I/O trait implementations — required for NodeBuilder::open()
 embedded-io-async = "0.6"
@@ -60,8 +66,8 @@ panic-probe = { version = "0.3", features = ["print-defmt"] }
 cortex-m = { version = "0.7", features = ["inline-asm"] }
 cortex-m-rt = "0.7"
 
-# Atomic operations for Cortex-M33 (RP2350) single-core use.
-# unsafe-assume-single-core: safe for RP2350 main core (single-threaded async).
+# Atomic operations for Cortex-M0+ (RP2040) single-core use.
+# unsafe-assume-single-core: safe for RP2040 (single-threaded async).
 portable-atomic = { version = "1", features = ["unsafe-assume-single-core"] }
 
 # zenoh-ros2-nostd library

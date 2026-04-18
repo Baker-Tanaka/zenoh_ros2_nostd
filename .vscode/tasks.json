@@ -111,9 +111,9 @@
             ]
         },
         {
-            "label": "w5100s-evb-pico2: build (debug)",
+            "label": "bakerlink-wiz630io: build (debug)",
             "type": "shell",
-            "command": "cd examples/w5100s_evb_pico2 && cargo build",
+            "command": "cd examples/bakerlink_wiz630io && cargo build",
             "group": "build",
             "problemMatcher": [
                 "$rustc"

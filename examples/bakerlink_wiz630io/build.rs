@@ -6,7 +6,10 @@ fn main() {
     println!("cargo:rerun-if-changed=config.json");
 
     // Tell the linker where to find memory.x
-    println!("cargo:rustc-link-search={}", std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    println!(
+        "cargo:rustc-link-search={}",
+        std::env::var("CARGO_MANIFEST_DIR").unwrap()
+    );
 
     let json = fs::read_to_string("config.json").unwrap_or_else(|_| {
         panic!(
