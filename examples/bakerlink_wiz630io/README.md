@@ -169,3 +169,14 @@ ros2 topic echo /chatter std_msgs/msg/String
 | TCP 接続がタイムアウト | `config.json` の `router_addr` が正しいか確認                       |
 | パブリッシュが失敗する | Zenoh ルーターが起動しているか確認 (`docker compose ps`)            |
 | W5500 init failed      | SPI 配線を確認。GP20 (RSTn) が正しく接続されているか確認            |
+
+
+## Windows11 ファイヤーウォール設定
+Zenoh Routerを起動しているホストマシンがWindows11の場合は、以下のコマンドを実行してファイヤーウォールの設定をしてください。
+```powershell
+New-NetFirewallRule -DisplayName "Zenoh Router 7447" `
+    -Direction Inbound `
+    -Protocol TCP `
+    -LocalPort 7447 `
+    -Action Allow
+```

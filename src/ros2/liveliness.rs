@@ -3,10 +3,14 @@
 //! Liveliness tokens allow ROS2 graph discovery. Each entity
 //! (publisher/subscriber) announces its presence via a liveliness key.
 //!
-//! Format:
+//! Format (rmw_zenoh_cpp):
 //! ```text
-//! @ros2_lv/<domain_id>/<zid>/<nid>/<entity_id>/<entity_type>/<namespace>/<node_name>/<topic>/<type>/<hash>/<qos>
+//! @ros2_lv/<domain_id>/<zid>/<nid>/<entity_id>/<entity_type>/<enclave>/<namespace>/<node_name>/<topic>/<type>/<hash>/<qos>
 //! ```
+//!
+//! Name mangling: all `/` in enclave, namespace, node_name, topic, type, and
+//! type_hash are replaced with `%` (the `SLASH_REPLACEMENT` used by
+//! rmw_zenoh_cpp). An empty or root-only field becomes `%`.
 
 use heapless::String;
 
@@ -50,6 +54,7 @@ pub fn build_liveliness_token(
     nid: u32,
     entity_id: u32,
     entity_type: EntityType,
+    enclave: &str,
     namespace: &str,
     node_name: &str,
     topic_name: &str,
@@ -84,28 +89,28 @@ pub fn build_liveliness_token(
     s.push_str(entity_type.as_str()).map_err(|_| ())?;
     s.push('/').map_err(|_| ())?;
 
-    // Namespace (strip leading slash)
-    let ns = namespace.strip_prefix('/').unwrap_or(namespace);
-    if !ns.is_empty() {
-        s.push_str(ns).map_err(|_| ())?;
-    }
+    // Enclave (mangled; empty/unset → "%")
+    push_mangled_absolute(&mut s, enclave)?;
     s.push('/').map_err(|_| ())?;
 
-    // Node name
-    s.push_str(node_name).map_err(|_| ())?;
+    // Namespace (mangled; "/" or "" → "%")
+    push_mangled_absolute(&mut s, namespace)?;
     s.push('/').map_err(|_| ())?;
 
-    // Topic name (strip leading slash)
-    let topic = topic_name.strip_prefix('/').unwrap_or(topic_name);
-    s.push_str(topic).map_err(|_| ())?;
+    // Node name (mangled)
+    push_mangled(&mut s, node_name)?;
     s.push('/').map_err(|_| ())?;
 
-    // Type name
-    s.push_str(type_name).map_err(|_| ())?;
+    // Topic name (mangled absolute — prepends '%' for leading '/')
+    push_mangled_absolute(&mut s, topic_name)?;
     s.push('/').map_err(|_| ())?;
 
-    // Type hash
-    s.push_str(type_hash).map_err(|_| ())?;
+    // Type name (mangled)
+    push_mangled(&mut s, type_name)?;
+    s.push('/').map_err(|_| ())?;
+
+    // Type hash (mangled)
+    push_mangled(&mut s, type_hash)?;
     s.push('/').map_err(|_| ())?;
 
     // QoS (rmw_zenoh_cpp-compatible keyexpr encoding)
@@ -142,6 +147,51 @@ fn push_hex_byte<const N: usize>(s: &mut String<N>, byte: u8) -> Result<(), ()> 
     Ok(())
 }
 
+/// Mangle a name: replace every `/` with `%` (rmw_zenoh_cpp convention).
+/// An empty string or a bare `/` becomes `%`.
+fn push_mangled<const N: usize>(s: &mut String<N>, name: &str) -> Result<(), ()> {
+    if name.is_empty() || name == "/" {
+        s.push('%').map_err(|_| ())?;
+        return Ok(());
+    }
+    for c in name.chars() {
+        if c == '/' {
+            s.push('%').map_err(|_| ())?;
+        } else {
+            s.push(c).map_err(|_| ())?;
+        }
+    }
+    Ok(())
+}
+
+/// Mangle an absolute ROS2 name (enclave, namespace, topic).
+///
+/// These names canonically start with `/` in ROS2 (e.g. `/baker_link/status`),
+/// but our `TopicKeyExpr` stores them without the leading slash. This helper
+/// ensures the mangled output always starts with `%` (the mangled `/`).
+///
+/// - `""` or `"/"` → `%`
+/// - `"/foo/bar"` → `%foo%bar` (already absolute)
+/// - `"foo/bar"` → `%foo%bar` (prepends `%` for missing leading `/`)
+fn push_mangled_absolute<const N: usize>(s: &mut String<N>, name: &str) -> Result<(), ()> {
+    if name.is_empty() || name == "/" {
+        s.push('%').map_err(|_| ())?;
+        return Ok(());
+    }
+    // If it doesn't start with '/', prepend '%' (the mangled leading '/').
+    if !name.starts_with('/') {
+        s.push('%').map_err(|_| ())?;
+    }
+    for c in name.chars() {
+        if c == '/' {
+            s.push('%').map_err(|_| ())?;
+        } else {
+            s.push(c).map_err(|_| ())?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,6 +206,7 @@ mod tests {
             1,
             EntityType::Publisher,
             "",
+            "",
             "mcu_node",
             "cmd_vel",
             "geometry_msgs::msg::Twist",
@@ -165,12 +216,34 @@ mod tests {
         .unwrap();
 
         assert!(token.starts_with("@ros2_lv/0/"));
-        assert!(token.contains("/MP/"));
-        assert!(token.contains("/mcu_node/"));
-        assert!(token.contains("/cmd_vel/"));
+        // enclave="%", namespace="%", node="mcu_node", topic="%cmd_vel"
+        assert!(token.contains("/MP/%/%/mcu_node/%cmd_vel/"));
         assert!(token.contains("/geometry_msgs::msg::Twist/"));
         // Qos::DEFAULT = reliable(1), volatile(2), keep_last(10)
         // rmw format: all defaults except depth=10
         assert!(token.ends_with("/::,10:,:,:,,"));
+    }
+
+    #[test]
+    fn test_mangling_with_slashes() {
+        let zid = ZenohId::from_bytes(&[0xAA]);
+        let token = build_liveliness_token(
+            0,
+            &zid,
+            0,
+            1,
+            EntityType::Publisher,
+            "",
+            "/my_ns",
+            "node1",
+            "baker_link/status",
+            "std_msgs::msg::dds_::String_",
+            "RIHS01_df668c740482bbd48fb39d76a70dfd4bd59db1288021743503259e948f6b1a18",
+            &Qos::DEFAULT,
+        )
+        .unwrap();
+
+        // namespace="/my_ns" → "%my_ns", topic="baker_link/status" → "%baker_link%status"
+        assert!(token.contains("/MP/%/%my_ns/node1/%baker_link%status/"));
     }
 }

@@ -15,8 +15,10 @@ const DEFAULT_LEASE_MS: u64 = 10_000;
 pub struct HandshakeResult {
     /// Router's zenoh ID.
     pub router_zid: ZenohId,
-    /// Negotiated lease time in milliseconds.
+    /// Lease time the router requires us to respect (router's announced lease).
     pub lease_ms: u64,
+    /// Lease time we proposed to the router (our keepalive obligation).
+    pub our_lease_ms: u64,
     /// Initial sequence number for this end.
     pub initial_sn: u64,
     /// Router's initial sequence number.
@@ -79,6 +81,7 @@ pub async fn client_handshake<T: Read + Write>(
     Ok(HandshakeResult {
         router_zid: init_ack.zid,
         lease_ms: open_ack.lease_ms,
+        our_lease_ms: DEFAULT_LEASE_MS,
         initial_sn: 0,
         router_initial_sn: open_ack.initial_sn,
     })

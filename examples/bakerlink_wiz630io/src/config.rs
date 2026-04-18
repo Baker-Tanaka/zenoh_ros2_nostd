@@ -20,8 +20,6 @@ use embassy_net::{IpEndpoint, Ipv4Address};
 use zenoh_ros2_nostd::ros2::ZenohRos2Config;
 use zenoh_ros2_nostd::transport::protocol::ZenohId;
 
-// ── Compile-time constants ────────────────────────────────────────────────────
-
 /// Router address embedded by `build.rs` from `config.json`.
 const ZENOH_ROUTER_ADDR_STR: &str = env!("ZENOH_ROUTER_ADDR");
 
@@ -32,8 +30,6 @@ const ZENOH_ROUTER_ADDR_STR: &str = env!("ZENOH_ROUTER_ADDR");
 /// - RP2040 chip ID is accessible via QSPI RUID command
 /// - Use the lower 8 bytes as ZenohId to guarantee uniqueness
 const DEVICE_ZID_BYTES: [u8; 8] = [0xBA, 0xCE, 0x01, 0x00, 0x06, 0x30, 0x00, 0x01]; // REPLACE
-
-// ── Config structs ────────────────────────────────────────────────────────────
 
 /// Compile-time application configuration.
 pub struct AppConfig {
@@ -73,8 +69,6 @@ impl ZenohConfig {
         IpEndpoint::from((Ipv4Address::from(self.router_ip), self.router_port))
     }
 }
-
-// ── Address parsing helpers (no_std, no alloc) ───────────────────────────────
 
 /// Parse `"a.b.c.d:port"` into `([u8; 4], u16)`.
 ///

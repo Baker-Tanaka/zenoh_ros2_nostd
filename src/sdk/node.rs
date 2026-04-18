@@ -174,6 +174,7 @@ impl NodeBuilder {
             request_id_gen: 1,
             gid: zid,
             lease_ms,
+            our_lease_ms: hs.our_lease_ms,
             publishers: Vec::new(),
             subscribers: Vec::new(),
             timers: Vec::new(),
@@ -242,8 +243,10 @@ pub struct Node<T: Read + Write> {
     request_id_gen: u32,
     /// This node's ZenohId.
     gid: ZenohId,
-    /// Keepalive lease negotiated during handshake (ms).
+    /// Keepalive lease announced by the router (ms).
     lease_ms: u64,
+    /// Keepalive lease we proposed to the router (ms).
+    our_lease_ms: u64,
     /// Registered publisher drains.
     publishers: Vec<&'static dyn PublisherDrain, MAX_PUBS>,
     /// Registered subscriptions: `(key_id, dispatch)`.
@@ -644,12 +647,17 @@ impl<T: Read + Write> Node<T> {
     /// Unlike the internal `ros2::Node::spin`, this method manages its own
     /// receive buffer internally.
     pub async fn spin(&mut self) {
-        let keepalive_interval = Duration::from_millis(self.lease_ms / 2);
+        // Use the smaller of our proposed lease and the router's lease.
+        // We promised the router we'd send within our_lease_ms, so we
+        // must keepalive at half that interval at most.
+        let effective_lease = self.our_lease_ms.min(self.lease_ms);
+        let keepalive_interval = Duration::from_millis(effective_lease / 2);
         let mut rx_buf = [0u8; RX_BUF_SIZE];
         let mut frag_asm = FragmentAssembler::<FRAGMENT_BUF_SIZE>::new();
 
         loop {
             if self.drain_publishers().await.is_err() {
+                ros2_warn!("spin: drain_publishers failed — transport error");
                 return;
             }
 
@@ -661,15 +669,21 @@ impl<T: Read + Write> Node<T> {
             {
                 Ok(Ok(n)) => {
                     if self.dispatch_frame(&rx_buf[..n], &mut frag_asm).is_err() {
+                        ros2_warn!("spin: Close received from router");
                         return;
                     }
                 }
-                Ok(Err(_)) => return,
+                Ok(Err(_)) => {
+                    ros2_warn!("spin: read_frame I/O error — connection dropped");
+                    return;
+                }
                 Err(_timeout) => {
                     if self.drain_publishers().await.is_err() {
+                        ros2_warn!("spin: keepalive drain_publishers failed");
                         return;
                     }
                     if self.send_keepalive().await.is_err() {
+                        ros2_warn!("spin: send_keepalive failed — connection dropped");
                         return;
                     }
                 }
@@ -683,7 +697,8 @@ impl<T: Read + Write> Node<T> {
     /// - Fires `on_message` when a subscribed topic receives data.
     /// - Fires `on_timer` when registered timers expire.
     pub async fn spin_with_callbacks<C: NodeCallbacks>(&mut self, callbacks: &mut C) {
-        let keepalive_interval = Duration::from_millis(self.lease_ms / 2);
+        let effective_lease = self.our_lease_ms.min(self.lease_ms);
+        let keepalive_interval = Duration::from_millis(effective_lease / 2);
         let mut rx_buf = [0u8; RX_BUF_SIZE];
         let mut frag_asm = FragmentAssembler::<FRAGMENT_BUF_SIZE>::new();
 
@@ -794,6 +809,7 @@ impl<T: Read + Write> Node<T> {
             0,
             entity_id,
             entity_type,
+            "",
             self.namespace,
             self.node_name,
             topic.topic_name,

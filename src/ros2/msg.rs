@@ -36,6 +36,7 @@ use super::message_trait::RosMessage;
 /// `std_msgs` package message type constants.
 pub mod std_msgs {
     use super::TopicKeyExpr;
+    use serde::{Deserialize, Serialize};
 
     /// `std_msgs/msg/String`.
     pub struct String;
@@ -60,6 +61,62 @@ pub mod std_msgs {
         /// Pre-built topic for the canonical `/chatter` topic (domain 0).
         pub const CHATTER: TopicKeyExpr = Self::topic(0, "chatter");
     }
+
+    /// `std_msgs/msg/Float32` type metadata.
+    pub struct Float32Type;
+
+    impl Float32Type {
+        /// DDS type name (rmw_zenoh_cpp convention).
+        pub const TYPE_NAME: &'static str = "std_msgs::msg::dds_::Float32_";
+
+        /// RIHS01 type hash for `std_msgs/msg/Float32`. **VERIFIED.**
+        pub const TYPE_HASH: &'static str =
+            "RIHS01_7170d3d8f841f7be3172ce5f4f59f3a4d7f63b0447e8b33327601ad64d83d6e2";
+
+        /// Build a [`TopicKeyExpr`] for any topic using this message type.
+        pub const fn topic(domain_id: u32, topic_name: &'static str) -> TopicKeyExpr {
+            TopicKeyExpr::new(domain_id, topic_name, Self::TYPE_NAME, Self::TYPE_HASH)
+        }
+    }
+
+    /// CDR-serializable `std_msgs/Float32` message.
+    ///
+    /// CDR size: 4 bytes body. With encapsulation header: 8 bytes total.
+    #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+    pub struct Float32Msg {
+        pub data: f32,
+    }
+
+    /// CDR buffer capacity for a `Float32` message (4 header + 4 body = 8 bytes).
+    pub const FLOAT32_CDR_CAP: usize = 8;
+
+    /// `std_msgs/msg/Int32` type metadata.
+    pub struct Int32Type;
+
+    impl Int32Type {
+        /// DDS type name (rmw_zenoh_cpp convention).
+        pub const TYPE_NAME: &'static str = "std_msgs::msg::dds_::Int32_";
+
+        /// RIHS01 type hash for `std_msgs/msg/Int32`. **VERIFIED.**
+        pub const TYPE_HASH: &'static str =
+            "RIHS01_b6578ded3c58c626cfe8d1a6fb6e04f706f97e9f03d2727c9ff4e74b1cef0deb";
+
+        /// Build a [`TopicKeyExpr`] for any topic using this message type.
+        pub const fn topic(domain_id: u32, topic_name: &'static str) -> TopicKeyExpr {
+            TopicKeyExpr::new(domain_id, topic_name, Self::TYPE_NAME, Self::TYPE_HASH)
+        }
+    }
+
+    /// CDR-serializable `std_msgs/Int32` message.
+    ///
+    /// CDR size: 4 bytes body. With encapsulation header: 8 bytes total.
+    #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+    pub struct Int32Msg {
+        pub data: i32,
+    }
+
+    /// CDR buffer capacity for an `Int32` message (4 header + 4 body = 8 bytes).
+    pub const INT32_CDR_CAP: usize = 8;
 }
 
 /// `geometry_msgs` package message type constants and CDR-serializable structs.
@@ -147,6 +204,78 @@ pub mod geometry_msgs {
         const TYPE_NAME: &'static str = TwistType::TYPE_NAME;
         const TYPE_HASH: &'static str = TwistType::TYPE_HASH;
     }
+}
+
+/// `rcl_interfaces` package — ROS2 logging and parameter types.
+pub mod rcl_interfaces {
+    use super::TopicKeyExpr;
+    use heapless::String;
+    use serde::{Deserialize, Serialize};
+
+    /// `builtin_interfaces/msg/Time` — seconds + nanoseconds.
+    ///
+    /// CDR size: 8 bytes (i32 sec + u32 nanosec).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct Stamp {
+        pub sec: i32,
+        pub nanosec: u32,
+    }
+
+    /// `rcl_interfaces/msg/Log` — log message published on `/rosout`.
+    ///
+    /// CDR layout (LE, with alignment):
+    /// - `stamp`: `{sec: i32, nanosec: u32}` (8 bytes)
+    /// - `level`: `u8` (1 byte + 3 padding to align next u32)
+    /// - `name`: CDR string (u32 len + data + NUL)
+    /// - `msg`: CDR string
+    /// - `file`: CDR string
+    /// - `function`: CDR string
+    /// - `line`: `u32`
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct Log<const N: usize = 128> {
+        pub stamp: Stamp,
+        pub level: u8,
+        pub name: String<N>,
+        pub msg: String<N>,
+        pub file: String<N>,
+        pub function: String<N>,
+        pub line: u32,
+    }
+
+    /// Log level constants matching ROS2 `rcl_interfaces/msg/Log`.
+    pub mod log_level {
+        pub const DEBUG: u8 = 10;
+        pub const INFO: u8 = 20;
+        pub const WARN: u8 = 30;
+        pub const ERROR: u8 = 40;
+        pub const FATAL: u8 = 50;
+    }
+
+    /// Type metadata for `rcl_interfaces/msg/Log`.
+    pub struct LogType;
+
+    impl LogType {
+        /// DDS type name (rmw_zenoh_cpp convention).
+        pub const TYPE_NAME: &'static str = "rcl_interfaces::msg::dds_::Log_";
+
+        /// RIHS01 type hash for `rcl_interfaces/msg/Log`. **VERIFIED.**
+        pub const TYPE_HASH: &'static str =
+            "RIHS01_e28ce254ca8abc06abf92773b74602cdbf116ed34fbaf294fb9f81da9f318eac";
+
+        /// Build a [`TopicKeyExpr`] for any topic using this message type.
+        pub const fn topic(domain_id: u32, topic_name: &'static str) -> TopicKeyExpr {
+            TopicKeyExpr::new(domain_id, topic_name, Self::TYPE_NAME, Self::TYPE_HASH)
+        }
+
+        /// Pre-built topic for `/rosout` (domain 0).
+        pub const ROSOUT: TopicKeyExpr = Self::topic(0, "rosout");
+    }
+
+    /// CDR buffer capacity for a Log message.
+    ///
+    /// Conservative estimate: 4 header + 8 stamp + 1 level + 3 pad
+    /// + 4×(4+128+1) strings + 4 line = ~552. Round up.
+    pub const LOG_CDR_CAP: usize = 600;
 }
 
 /// `action_msgs` and `unique_identifier_msgs` — common ROS2 action types.

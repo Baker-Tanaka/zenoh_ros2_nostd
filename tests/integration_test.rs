@@ -638,6 +638,7 @@ async fn test_declare_liveliness_token() {
             1,
             EntityType::Publisher,
             "",
+            "",
             "test_node",
             "chatter",
             "std_msgs::msg::dds_::String_",
@@ -1320,6 +1321,7 @@ async fn handshake_with_batch_size<T: embedded_io_async::Read + embedded_io_asyn
     Ok(handshake::HandshakeResult {
         router_zid: init_ack.zid,
         lease_ms: open_ack.lease_ms,
+        our_lease_ms: 10_000,
         initial_sn: 0,
         router_initial_sn: open_ack.initial_sn,
     })
