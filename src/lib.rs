@@ -107,8 +107,8 @@ pub use zenoh_ros2_nostd_derive::RosMessage;
 // avoid requiring users to import the trait manually.
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::ros2::message_trait::RosMessage;
     pub use crate::ros2::keyexpr::TopicKeyExpr;
+    pub use crate::ros2::message_trait::RosMessage;
 }
 
 #[macro_use]

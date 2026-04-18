@@ -64,9 +64,7 @@ pub fn derive_ros_message(input: TokenStream) -> TokenStream {
     }
 }
 
-fn derive_ros_message_impl(
-    input: &DeriveInput,
-) -> Result<proc_macro2::TokenStream, syn::Error> {
+fn derive_ros_message_impl(input: &DeriveInput) -> Result<proc_macro2::TokenStream, syn::Error> {
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 

@@ -151,29 +151,54 @@ async fn zenoh_task(stack: Stack<'static>) {
     let tcp_rx = TCP_RX.init([0u8; 4096]);
     let tcp_tx = TCP_TX.init([0u8; 4096]);
 
+    let router_ep = cfg.zenoh.router_endpoint();
+    info!(
+        "[net] router target = {}.{}.{}.{}:{}",
+        cfg.zenoh.router_ip[0],
+        cfg.zenoh.router_ip[1],
+        cfg.zenoh.router_ip[2],
+        cfg.zenoh.router_ip[3],
+        cfg.zenoh.router_port,
+    );
+
     loop {
         while stack.config_v4().is_none() {
             Timer::after(Duration::from_millis(500)).await;
         }
-        info!("[net] DHCP OK");
+        if let Some(ip_cfg) = stack.config_v4() {
+            let addr = ip_cfg.address.address().octets();
+            let gw = ip_cfg.gateway.map(|g| g.octets()).unwrap_or([0, 0, 0, 0]);
+            info!(
+                "[net] DHCP OK — IP {}.{}.{}.{} GW {}.{}.{}.{}",
+                addr[0], addr[1], addr[2], addr[3], gw[0], gw[1], gw[2], gw[3],
+            );
+        }
 
         let mut socket = TcpSocket::new(stack, tcp_rx, tcp_tx);
         socket.set_timeout(Some(Duration::from_secs(30)));
 
-        match with_timeout(
-            Duration::from_secs(10),
-            socket.connect(cfg.zenoh.router_endpoint()),
-        )
-        .await
-        {
+        match with_timeout(Duration::from_secs(10), socket.connect(router_ep)).await {
             Ok(Ok(())) => info!("[zenoh] connected"),
-            Ok(Err(_)) => {
-                error!("[zenoh] connect failed");
+            Ok(Err(e)) => {
+                match e {
+                    embassy_net::tcp::ConnectError::InvalidState => {
+                        error!("[zenoh] connect failed: InvalidState")
+                    }
+                    embassy_net::tcp::ConnectError::ConnectionReset => {
+                        error!("[zenoh] connect failed: ConnectionReset (RST)")
+                    }
+                    embassy_net::tcp::ConnectError::TimedOut => {
+                        error!("[zenoh] connect failed: TimedOut")
+                    }
+                    embassy_net::tcp::ConnectError::NoRoute => {
+                        error!("[zenoh] connect failed: NoRoute")
+                    }
+                }
                 reconnect.wait_and_advance().await;
                 continue;
             }
             Err(_) => {
-                warn!("[zenoh] connect timeout");
+                warn!("[zenoh] connect timeout — is router reachable?");
                 reconnect.wait_and_advance().await;
                 continue;
             }
