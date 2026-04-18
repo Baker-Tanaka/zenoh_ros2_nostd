@@ -29,7 +29,7 @@ All notable changes to this project will be documented in this file.
 - Crate metadata in `Cargo.toml` updated for publishing readiness.
 - README roadmap extended with a dedicated v0.9 release preparation phase.
 - Example docs simplified for fast start paths:
-  - `examples/w5100s_evb_pico2/README.md`
+  - `examples/bakerlink_wiz630io/README.md`
   - `examples/wasi_turtlebot3/README.md`
 
 ### Notes

@@ -123,19 +123,19 @@ static TWIST_PUB: zenoh_ros2_nostd::ros2::Publisher<Twist, 256, 4> =
 
 ## Examples
 
-| Example | ターゲット | 状態 | 説明 |
-|---|---|---|---|
-| [`w5100s_evb_pico2`](examples/w5100s_evb_pico2/) | RP2350 + W5100S Ethernet | ✅ アクティブ | W5100S-EVB-Pico2 で Docker 上の ROS2 と pub/sub |
-| [`wasi_turtlebot3`](examples/wasi_turtlebot3/) | wasm32-wasip1 | ✅ アクティブ | wasmtime で Gazebo turtlebot3 と cmd_vel 通信 ([ガイド](docs/wasi-guide.md)) |
-| [`wasi_chatter_class`](examples/wasi_chatter_class/) | wasm32-wasip1 | ✅ アクティブ | NodeCallbacks トレイト方式のクラスベース pub/sub デモ |
-| [`esp32c3_wifi`](examples/esp32c3_wifi/) | ESP32-C3 WiFi | 🗄️ アーカイブ | ESP32-C3 WiFi 接続デモ（現在未動作） |
+| Example                                              | ターゲット                         | 状態         | 説明                                                                         |
+| ---------------------------------------------------- | ---------------------------------- | ------------ | ---------------------------------------------------------------------------- |
+| [`bakerlink_wiz630io`](examples/bakerlink_wiz630io/) | RP2040 + WIZ630io (W5500) Ethernet | ✅ アクティブ | Baker link.dev + WIZ630io で Docker 上の ROS2 と pub/sub                     |
+| [`wasi_turtlebot3`](examples/wasi_turtlebot3/)       | wasm32-wasip1                      | ✅ アクティブ | wasmtime で Gazebo turtlebot3 と cmd_vel 通信 ([ガイド](docs/wasi-guide.md)) |
+| [`wasi_chatter_class`](examples/wasi_chatter_class/) | wasm32-wasip1                      | ✅ アクティブ | NodeCallbacks トレイト方式のクラスベース pub/sub デモ                        |
+| [`esp32c3_wifi`](examples/esp32c3_wifi/)             | ESP32-C3 WiFi                      | 🗄️ アーカイブ | ESP32-C3 WiFi 接続デモ（現在未動作）                                         |
 
 ### ⚠️ esp32c3_wifi — アーカイブ
 
 > このサンプルは現在**動作しない**ことが確認されています。
 > `esp-radio` / `esp-rtos` 依存のバージョン互換性問題により、接続が不安定です。
 > 参考実装として残してありますが、積極的なメンテナンスは行われていません。
-> RP2350 + W5100S の [`w5100s_evb_pico2`](examples/w5100s_evb_pico2/) サンプルを代わりにご利用ください。
+> RP2040 + WIZ630io の [`bakerlink_wiz630io`](examples/bakerlink_wiz630io/) サンプルを代わりにご利用ください。
 
 ## Architecture
 
@@ -317,8 +317,8 @@ cargo test --no-default-features --test integration_test -- --ignored --test-thr
 - [x] Frame 受信ループ (Frame → Push/Put → Subscriber dispatch)
 - [x] Declare Subscriber → Router 登録
 - [x] DeclareKeyExpr → ローカル ID 割り当て
-- [x] W5100S-EVB-Pico2 Embassy example (RP2350 + W5100S Ethernet)
-- [x] W5100S-EVB-Pico2 example を新 SDK API に移行
+- [x] Baker link.dev + WIZ630io Embassy example (RP2040 + W5500 Ethernet)
+- [x] Baker link.dev + WIZ630io example を新 SDK API に移行
 - [x] `rmw_zenoh_cpp` ROS2 ノードとの双方向 pub/sub 通信テスト (cross-session subscribe + rmw attachment)
 
 ### v0.3 — SDK Redesign (rclpy-like API) 🔄
@@ -388,7 +388,7 @@ WASI ターゲットで Gazebo シミュレーションと通信する。
 
 - [x] crates.io 公開準備（`Cargo.toml` メタデータ、LICENSE、CHANGELOG、CONTRIBUTING）
 - [x] CI 検証導線の追加（fmt / clippy / test / target check）
-- [x] examples の簡素化（`w5100s_evb_pico2` / `wasi_turtlebot3` の最短実行導線）
+- [x] examples の簡素化（`bakerlink_wiz630io` / `wasi_turtlebot3` の最短実行導線）
 - [x] `cargo publish --dry-run` で公開可能性を検証
 - [ ] crates.io への実公開（このフェーズでは実施しない）
 
@@ -406,16 +406,16 @@ WASI ターゲットで Gazebo シミュレーションと通信する。
 
 ## Dependencies
 
-| クレート            | バージョン | 用途                                |
-| ------------------- | ---------- | ----------------------------------- |
-| `serde`             | 1.0        | CDR シリアライズ (no_std, derive)   |
-| `heapless`          | 0.8        | 固定サイズコレクション (serde 対応) |
-| `embedded-io-async` | 0.6        | 非同期 Read/Write トレイト          |
-| `embassy-sync`      | 0.8        | Mutex, Channel (no_std 非同期)      |
-| `embassy-time`      | 0.5        | Timer, Duration (no_std 時間)       |
-| `defmt`             | 1.0        | 組み込みログ (optional)             |
-| `log`               | 0.4        | std ログ (optional)                 |
-| `zenoh-ros2-nostd-derive` | 0.9 | `#[derive(RosMessage)]` (optional, `derive` feature) |
+| クレート                  | バージョン | 用途                                                 |
+| ------------------------- | ---------- | ---------------------------------------------------- |
+| `serde`                   | 1.0        | CDR シリアライズ (no_std, derive)                    |
+| `heapless`                | 0.8        | 固定サイズコレクション (serde 対応)                  |
+| `embedded-io-async`       | 0.6        | 非同期 Read/Write トレイト                           |
+| `embassy-sync`            | 0.8        | Mutex, Channel (no_std 非同期)                       |
+| `embassy-time`            | 0.5        | Timer, Duration (no_std 時間)                        |
+| `defmt`                   | 1.0        | 組み込みログ (optional)                              |
+| `log`                     | 0.4        | std ログ (optional)                                  |
+| `zenoh-ros2-nostd-derive` | 0.9        | `#[derive(RosMessage)]` (optional, `derive` feature) |
 
 ## License
 

@@ -19,7 +19,7 @@ cargo test --target wasm32-wasip1 --no-default-features --no-run
 
 ```sh
 cd examples/wasi_turtlebot3 && cargo run
-cd examples/w5100s_evb_pico2 && cargo build
+cd examples/bakerlink_wiz630io && cargo build
 ```
 
 ## Pre-release Check (No Publish)
