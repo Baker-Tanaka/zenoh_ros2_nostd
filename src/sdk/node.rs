@@ -31,6 +31,7 @@ use super::traits::NodeCallbacks;
 use crate::error::Error;
 use crate::ros2::keyexpr::{ActionKeyExprs, TopicKeyExpr};
 use crate::ros2::liveliness::{self, EntityType};
+use crate::ros2::locality::Locality;
 use crate::ros2::publisher::{Publisher, PublisherDrain};
 use crate::ros2::qos::Qos;
 use crate::ros2::subscription::{Subscription, SubscriptionDispatch};
@@ -72,6 +73,18 @@ const FRAGMENT_BUF_SIZE: usize = 16384;
 struct TimerEntry {
     period: Duration,
     next_fire: Instant,
+}
+
+/// Entry in the node's subscriber routing table.
+struct SubscriberEntry {
+    /// Zenoh key_id assigned by `declare_key_expr`, or 0 for SessionLocal subs.
+    key_id: u16,
+    /// Delivery locality of this subscription.
+    locality: Locality,
+    /// Topic key expression used for local dispatch matching.
+    topic: TopicKeyExpr,
+    /// Type-erased dispatch interface.
+    dispatch: &'static dyn SubscriptionDispatch,
 }
 
 // ── NodeBuilder ───────────────────────────────────────────────────────────────
@@ -146,7 +159,7 @@ impl NodeBuilder {
     pub async fn build<T: Read + Write>(self, mut transport: T) -> Result<Node<T>, Error> {
         let zid = self
             .zid
-            .unwrap_or_else(|| Self::default_zid(self.node_name));
+            .unwrap_or_else(|| ZenohId::from_name(self.node_name));
 
         let mut hs_tx = [0u8; 512];
         let mut hs_rx = [0u8; 4096];
@@ -194,15 +207,6 @@ impl NodeBuilder {
         Ok((node, callbacks))
     }
 
-    /// Generate a deterministic ZenohId from the node name.
-    fn default_zid(name: &str) -> ZenohId {
-        // Simple hash: sum of bytes, spread across 8 bytes
-        let mut bytes = [0u8; 8];
-        for (i, b) in name.bytes().enumerate() {
-            bytes[i % 8] ^= b;
-        }
-        ZenohId::from_bytes(&bytes)
-    }
 }
 
 // ── Node ──────────────────────────────────────────────────────────────────────
@@ -249,8 +253,8 @@ pub struct Node<T: Read + Write> {
     our_lease_ms: u64,
     /// Registered publisher drains.
     publishers: Vec<&'static dyn PublisherDrain, MAX_PUBS>,
-    /// Registered subscriptions: `(key_id, dispatch)`.
-    subscribers: Vec<(u16, &'static dyn SubscriptionDispatch), MAX_SUBS>,
+    /// Registered subscriptions with routing metadata.
+    subscribers: Vec<SubscriberEntry, MAX_SUBS>,
     /// Registered timers.
     timers: Vec<TimerEntry, MAX_TIMERS>,
 }
@@ -286,9 +290,26 @@ impl<T: Read + Write> Node<T> {
     ///
     /// ```rust,ignore
     /// static MY_PUB: Publisher<Twist, 256, 4> = Publisher::new(CMD_VEL_TOPIC);
-    /// let handle = node.register_static_publisher(&MY_PUB).await?;
+    /// let handle = node.create_publisher(&MY_PUB).await?;
     /// handle.publish(&twist).await?;
     /// ```
+    pub async fn create_publisher<M: Serialize, const CDR_CAP: usize, const QUEUE: usize>(
+        &mut self,
+        publisher: &'static Publisher<M, CDR_CAP, QUEUE>,
+    ) -> Result<PublisherHandle<M, CDR_CAP, QUEUE>, Error> {
+        let drain = publisher.as_drain();
+        if drain.locality() != Locality::SessionLocal {
+            self.declare_liveliness(EntityType::Publisher, drain.topic_ke())
+                .await?;
+        }
+        let _ = self.publishers.push(drain);
+        Ok(PublisherHandle::new(publisher))
+    }
+
+    /// Register a static publisher and return a handle.
+    ///
+    /// Deprecated alias for [`create_publisher`](Self::create_publisher).
+    #[deprecated(since = "1.1.0", note = "create_publisher() を使用してください")]
     pub async fn register_static_publisher<
         M: Serialize,
         const CDR_CAP: usize,
@@ -297,11 +318,7 @@ impl<T: Read + Write> Node<T> {
         &mut self,
         publisher: &'static Publisher<M, CDR_CAP, QUEUE>,
     ) -> Result<PublisherHandle<M, CDR_CAP, QUEUE>, Error> {
-        let topic = publisher.as_drain().topic_ke();
-        self.declare_liveliness(EntityType::Publisher, topic)
-            .await?;
-        let _ = self.publishers.push(publisher.as_drain());
-        Ok(PublisherHandle::new(publisher))
+        self.create_publisher(publisher).await
     }
 
     // ── Subscription registration ─────────────────────────────────────────
@@ -313,9 +330,50 @@ impl<T: Read + Write> Node<T> {
     ///
     /// ```rust,ignore
     /// static MY_SUB: Subscription<StringMsg, 256, 4> = Subscription::new();
-    /// let handle = node.subscribe_with_dispatch(CHATTER_TOPIC, &MY_SUB).await?;
+    /// let handle = node.create_subscription(CHATTER_TOPIC, &MY_SUB).await?;
     /// let msg = handle.recv().await?;
     /// ```
+    pub async fn create_subscription<
+        M: for<'de> Deserialize<'de>,
+        const MSG_SIZE: usize,
+        const QUEUE: usize,
+    >(
+        &mut self,
+        topic: TopicKeyExpr,
+        sub: &'static Subscription<M, MSG_SIZE, QUEUE>,
+    ) -> Result<SubscriptionHandle<M, MSG_SIZE, QUEUE>, Error> {
+        let locality = sub.as_dispatch().locality();
+        let key_id = if locality == Locality::SessionLocal {
+            // SessionLocal: no DeclareKeyExpr / DeclareSubscriber / liveliness sent.
+            // key_id = 0 is the sentinel for "no network registration".
+            0u16
+        } else {
+            let ke = topic.to_key_expr().map_err(|_| Error::InvalidArgument)?;
+            let key_id = self.declare_key_expr(ke.as_str()).await?;
+            self.declare_subscriber(key_id).await?;
+            self.declare_liveliness(EntityType::Subscriber, &topic)
+                .await?;
+            ros2_info!(
+                "node '{}': subscribed to {} (key_id={})",
+                self.node_name,
+                ke.as_str(),
+                key_id
+            );
+            key_id
+        };
+        let _ = self.subscribers.push(SubscriberEntry {
+            key_id,
+            locality,
+            topic,
+            dispatch: sub.as_dispatch(),
+        });
+        Ok(SubscriptionHandle::new(sub))
+    }
+
+    /// Declare a topic subscription on the router and register the dispatch.
+    ///
+    /// Deprecated alias for [`create_subscription`](Self::create_subscription).
+    #[deprecated(since = "1.1.0", note = "create_subscription() を使用してください")]
     pub async fn subscribe_with_dispatch<
         M: for<'de> Deserialize<'de>,
         const MSG_SIZE: usize,
@@ -325,19 +383,7 @@ impl<T: Read + Write> Node<T> {
         topic: TopicKeyExpr,
         sub: &'static Subscription<M, MSG_SIZE, QUEUE>,
     ) -> Result<SubscriptionHandle<M, MSG_SIZE, QUEUE>, Error> {
-        let ke = topic.to_key_expr().map_err(|_| Error::InvalidArgument)?;
-        let key_id = self.declare_key_expr(ke.as_str()).await?;
-        self.declare_subscriber(key_id).await?;
-        self.declare_liveliness(EntityType::Subscriber, &topic)
-            .await?;
-        let _ = self.subscribers.push((key_id, sub.as_dispatch()));
-        ros2_info!(
-            "node '{}': subscribed to {} (key_id={})",
-            self.node_name,
-            ke.as_str(),
-            key_id
-        );
-        Ok(SubscriptionHandle::new(sub))
+        self.create_subscription(topic, sub).await
     }
 
     // ── Timer registration ────────────────────────────────────────────────
@@ -602,7 +648,7 @@ impl<T: Read + Write> Node<T> {
 
     /// Subscribe to action feedback messages.
     ///
-    /// Convenience wrapper around [`subscribe_with_dispatch`](Self::subscribe_with_dispatch)
+    /// Convenience wrapper around [`create_subscription`](Self::create_subscription)
     /// using the feedback key expression from [`ActionKeyExprs`].
     ///
     /// ```rust,ignore
@@ -618,12 +664,12 @@ impl<T: Read + Write> Node<T> {
         action_ke: &ActionKeyExprs,
         sub: &'static Subscription<M, MSG_SIZE, QUEUE>,
     ) -> Result<SubscriptionHandle<M, MSG_SIZE, QUEUE>, Error> {
-        self.subscribe_with_dispatch(action_ke.feedback, sub).await
+        self.create_subscription(action_ke.feedback, sub).await
     }
 
     /// Subscribe to action goal status updates.
     ///
-    /// Convenience wrapper around [`subscribe_with_dispatch`](Self::subscribe_with_dispatch)
+    /// Convenience wrapper around [`create_subscription`](Self::create_subscription)
     /// using the status key expression from [`ActionKeyExprs`].
     pub async fn subscribe_status<
         M: for<'de> Deserialize<'de>,
@@ -634,7 +680,7 @@ impl<T: Read + Write> Node<T> {
         action_ke: &ActionKeyExprs,
         sub: &'static Subscription<M, MSG_SIZE, QUEUE>,
     ) -> Result<SubscriptionHandle<M, MSG_SIZE, QUEUE>, Error> {
-        self.subscribe_with_dispatch(action_ke.status, sub).await
+        self.create_subscription(action_ke.status, sub).await
     }
 
     // ── Spin loop ─────────────────────────────────────────────────────────
@@ -845,19 +891,31 @@ impl<T: Read + Write> Node<T> {
     /// burst), and each Frame may contain multiple messages to reduce TCP
     /// write overhead.  On write failure the most recent message is stashed
     /// for retry after reconnection.
+    ///
+    /// Publishers with [`Locality::SessionLocal`] dispatch directly to matching
+    /// local subscriptions without touching the network.
+    /// Publishers with [`Locality::Remote`] send to the network only.
+    /// Publishers with [`Locality::Any`] do both.
     async fn drain_publishers(&mut self) -> Result<(), Error> {
         let mut cdr_scratch = [0u8; CDR_DRAIN_BUF];
         let mut frame_buf = [0u8; TX_FRAME_BUF];
 
         for i in 0..self.publishers.len() {
             let drain = self.publishers[i];
+            let pub_locality = drain.locality();
 
-            // Compute key expression once per publisher (avoids repeated
-            // heapless::String<256> formatting in the inner loop).
-            let ke = drain
-                .topic_ke()
-                .to_key_expr()
-                .map_err(|_| Error::InvalidArgument)?;
+            // Compute key expression once per publisher only if we need to send
+            // network traffic (avoids repeated heapless::String<256> formatting).
+            let ke = if pub_locality != Locality::SessionLocal {
+                Some(
+                    drain
+                        .topic_ke()
+                        .to_key_expr()
+                        .map_err(|_| Error::InvalidArgument)?,
+                )
+            } else {
+                None
+            };
 
             let mut pos = 0usize;
             let mut batch_started = false;
@@ -867,40 +925,49 @@ impl<T: Read + Write> Node<T> {
             let mut last_ts: i64 = 0;
 
             while let Some((n, seq, ts)) = drain.try_drain_into(&mut cdr_scratch) {
-                // Conservative estimate of the encoded Push+Put size.
-                let msg_est = ke.as_str().len() + n + 64;
+                // ── Local dispatch (SessionLocal or Any publishers) ───────────
+                if pub_locality != Locality::Remote {
+                    Self::dispatch_local(&self.subscribers, drain.topic_ke(), &cdr_scratch[..n]);
+                }
 
-                // Flush current batch if adding this message would overflow.
-                if batch_started && pos + msg_est > TX_FRAME_BUF {
-                    if let Err(e) = frame::write_frame(&mut self.transport, &frame_buf[..pos]).await
-                    {
-                        drain.stash_retry(&cdr_scratch[..n], seq, ts);
-                        return Err(Error::Transport(e));
+                // ── Network dispatch (Remote or Any publishers) ───────────────
+                if let Some(ref ke) = ke {
+                    // Conservative estimate of the encoded Push+Put size.
+                    let msg_est = ke.as_str().len() + n + 64;
+
+                    // Flush current batch if adding this message would overflow.
+                    if batch_started && pos + msg_est > TX_FRAME_BUF {
+                        if let Err(e) =
+                            frame::write_frame(&mut self.transport, &frame_buf[..pos]).await
+                        {
+                            drain.stash_retry(&cdr_scratch[..n], seq, ts);
+                            return Err(Error::Transport(e));
+                        }
+                        pos = 0;
+                        batch_started = false;
                     }
-                    pos = 0;
-                    batch_started = false;
+
+                    if !batch_started {
+                        pos = codec::encode_frame_header(&mut frame_buf, self.sn, true)
+                            .map_err(Error::Transport)?;
+                        self.sn = self.sn.wrapping_add(1);
+                        batch_started = true;
+                    }
+
+                    pos += codec::encode_push_put_with_attachment(
+                        &mut frame_buf[pos..],
+                        ke.as_str(),
+                        &cdr_scratch[..n],
+                        seq,
+                        ts,
+                        &self.gid,
+                    )
+                    .map_err(Error::Transport)?;
+
+                    last_n = n;
+                    last_seq = seq;
+                    last_ts = ts;
                 }
-
-                if !batch_started {
-                    pos = codec::encode_frame_header(&mut frame_buf, self.sn, true)
-                        .map_err(Error::Transport)?;
-                    self.sn = self.sn.wrapping_add(1);
-                    batch_started = true;
-                }
-
-                pos += codec::encode_push_put_with_attachment(
-                    &mut frame_buf[pos..],
-                    ke.as_str(),
-                    &cdr_scratch[..n],
-                    seq,
-                    ts,
-                    &self.gid,
-                )
-                .map_err(Error::Transport)?;
-
-                last_n = n;
-                last_seq = seq;
-                last_ts = ts;
             }
 
             // Flush remaining batch for this publisher.
@@ -912,6 +979,40 @@ impl<T: Read + Write> Node<T> {
             }
         }
         Ok(())
+    }
+
+    /// Dispatch a CDR payload directly to matching local subscriptions.
+    ///
+    /// Skips `Remote`-only subscriptions and subscriptions whose topic does
+    /// not match the publisher topic.
+    fn dispatch_local(
+        subscribers: &[SubscriberEntry],
+        pub_topic: &TopicKeyExpr,
+        payload: &[u8],
+    ) {
+        for entry in subscribers {
+            if entry.locality == Locality::Remote {
+                continue;
+            }
+            if Self::topics_match(&entry.topic, pub_topic) {
+                entry.dispatch.push_raw(payload);
+            }
+        }
+    }
+
+    /// Compare two [`TopicKeyExpr`]s by `domain_id` and `topic_name` only.
+    ///
+    /// Leading slashes are stripped before comparison so that `"chatter"` and
+    /// `"/chatter"` are treated as the same topic.  Type name and hash are
+    /// excluded — the ROS2 type system guarantees that the same topic name
+    /// always carries the same type.
+    fn topics_match(a: &TopicKeyExpr, b: &TopicKeyExpr) -> bool {
+        if a.domain_id != b.domain_id {
+            return false;
+        }
+        let a_name = a.topic_name.trim_start_matches('/');
+        let b_name = b.topic_name.trim_start_matches('/');
+        a_name == b_name
     }
 
     async fn send_keepalive(&mut self) -> Result<(), Error> {
@@ -969,14 +1070,15 @@ impl<T: Read + Write> Node<T> {
         }
     }
 
-    fn route_to_subscribers(
-        subscribers: &[(u16, &'static dyn SubscriptionDispatch)],
-        put: &codec::IncomingPut<'_>,
-    ) {
+    fn route_to_subscribers(subscribers: &[SubscriberEntry], put: &codec::IncomingPut<'_>) {
         let scope_id = put.scope as u16;
-        for (key_id, dispatch) in subscribers {
-            if scope_id == *key_id {
-                dispatch.push_raw(put.payload);
+        for entry in subscribers {
+            // SessionLocal subscriptions have key_id=0 and never receive network frames.
+            if entry.key_id == 0 || entry.locality == Locality::SessionLocal {
+                continue;
+            }
+            if scope_id == entry.key_id {
+                entry.dispatch.push_raw(put.payload);
                 break;
             }
         }
@@ -1056,5 +1158,42 @@ impl<T: Read + Write> Node<T> {
             }
         }
         min
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ros2::keyexpr::TopicKeyExpr;
+
+    fn make_topic(domain_id: u32, topic_name: &'static str) -> TopicKeyExpr {
+        TopicKeyExpr::new(domain_id, topic_name, "test_msgs::msg::dds_::Msg_", "RIHS01_aa")
+    }
+
+    /// Mirrors Node::topics_match logic for testing without needing a Node instance.
+    fn topics_match(a: &TopicKeyExpr, b: &TopicKeyExpr) -> bool {
+        if a.domain_id != b.domain_id {
+            return false;
+        }
+        a.topic_name.trim_start_matches('/') == b.topic_name.trim_start_matches('/')
+    }
+
+    #[test]
+    fn topics_match_identical() {
+        assert!(topics_match(&make_topic(0, "chatter"), &make_topic(0, "chatter")));
+    }
+
+    #[test]
+    fn topics_match_leading_slash() {
+        assert!(topics_match(&make_topic(0, "/chatter"), &make_topic(0, "chatter")));
+    }
+
+    #[test]
+    fn topics_no_match_different_domain() {
+        assert!(!topics_match(&make_topic(0, "chatter"), &make_topic(1, "chatter")));
+    }
+
+    #[test]
+    fn topics_no_match_different_name() {
+        assert!(!topics_match(&make_topic(0, "chatter"), &make_topic(0, "cmd_vel")));
     }
 }

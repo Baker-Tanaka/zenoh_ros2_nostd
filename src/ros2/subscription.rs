@@ -25,6 +25,7 @@ use core::marker::PhantomData;
 
 use serde::Deserialize;
 
+use super::locality::Locality;
 use crate::cdr;
 use crate::error::Error;
 use crate::session::subscriber::Subscriber;
@@ -40,6 +41,14 @@ pub trait SubscriptionDispatch: Sync {
     /// Push a raw CDR payload (with 4-byte encapsulation header) into the
     /// subscription's internal queue for later retrieval by the application.
     fn push_raw(&self, payload: &[u8]);
+
+    /// Locality of this subscription.
+    ///
+    /// Defaults to [`Locality::Any`] for backward compatibility with external
+    /// implementations that do not override this method.
+    fn locality(&self) -> Locality {
+        Locality::Any
+    }
 }
 
 // ── Subscription ──────────────────────────────────────────────────────────────
@@ -56,6 +65,7 @@ pub trait SubscriptionDispatch: Sync {
 /// ```
 pub struct Subscription<M, const MSG_SIZE: usize, const QUEUE: usize> {
     inner: Subscriber<MSG_SIZE, QUEUE>,
+    locality: Locality,
     _phantom: PhantomData<fn() -> M>,
 }
 
@@ -67,6 +77,23 @@ where
     pub const fn new() -> Self {
         Self {
             inner: Subscriber::new(),
+            locality: Locality::Any,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Create a subscription with explicit locality control.
+    ///
+    /// Safe to call as a `static` initializer.
+    ///
+    /// ```rust,ignore
+    /// static LOCAL_SUB: Subscription<SensorMsg, 64, 2> =
+    ///     Subscription::with_locality(Locality::SessionLocal);
+    /// ```
+    pub const fn with_locality(locality: Locality) -> Self {
+        Self {
+            inner: Subscriber::new(),
+            locality,
             _phantom: PhantomData,
         }
     }
@@ -124,5 +151,9 @@ impl<M, const MSG_SIZE: usize, const QUEUE: usize> SubscriptionDispatch
 {
     fn push_raw(&self, payload: &[u8]) {
         self.inner.push(payload);
+    }
+
+    fn locality(&self) -> Locality {
+        self.locality
     }
 }

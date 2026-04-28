@@ -27,6 +27,7 @@ use embedded_io_async::{Read, Write};
 use heapless::Vec;
 
 use super::keyexpr::TopicKeyExpr;
+use super::locality::Locality;
 use super::publisher::PublisherDrain;
 use super::subscription::SubscriptionDispatch;
 use crate::error::Error;
@@ -59,6 +60,18 @@ const MAX_PUBS: usize = 4;
 
 /// Maximum subscriptions per Node.
 const MAX_SUBS: usize = 4;
+
+/// Entry in the node's subscriber routing table.
+struct SubscriberEntry {
+    /// Zenoh key_id assigned by `declare_key_expr`, or 0 for SessionLocal subs.
+    key_id: u16,
+    /// Delivery locality of this subscription.
+    locality: Locality,
+    /// Topic key expression used for local dispatch matching.
+    topic: TopicKeyExpr,
+    /// Type-erased dispatch interface.
+    dispatch: &'static dyn SubscriptionDispatch,
+}
 
 // ── NodeBuilder ───────────────────────────────────────────────────────────────
 
@@ -179,8 +192,8 @@ pub struct Node<T: Read + Write> {
     lease_ms: u64,
     /// Registered static publisher drains.
     publishers: Vec<&'static dyn PublisherDrain, MAX_PUBS>,
-    /// Registered subscriptions: `(key_id, dispatch)`.
-    subscribers: Vec<(u16, &'static dyn SubscriptionDispatch), MAX_SUBS>,
+    /// Registered subscriptions with routing metadata.
+    subscribers: Vec<SubscriberEntry, MAX_SUBS>,
 }
 
 impl<T: Read + Write> Node<T> {
@@ -229,16 +242,27 @@ impl<T: Read + Write> Node<T> {
         topic: TopicKeyExpr,
         sub: &'static dyn SubscriptionDispatch,
     ) -> Result<u16, Error> {
-        let ke = topic.to_key_expr().map_err(|_| Error::InvalidArgument)?;
-        let key_id = self.declare_key_expr(ke.as_str()).await?;
-        self.declare_subscriber(key_id).await?;
-        let _ = self.subscribers.push((key_id, sub));
-        ros2_info!(
-            "node '{}': subscribed to {} (key_id={})",
-            self.node_name,
-            ke.as_str(),
+        let locality = sub.locality();
+        let key_id = if locality == Locality::SessionLocal {
+            0u16
+        } else {
+            let ke = topic.to_key_expr().map_err(|_| Error::InvalidArgument)?;
+            let key_id = self.declare_key_expr(ke.as_str()).await?;
+            self.declare_subscriber(key_id).await?;
+            ros2_info!(
+                "node '{}': subscribed to {} (key_id={})",
+                self.node_name,
+                ke.as_str(),
+                key_id
+            );
             key_id
-        );
+        };
+        let _ = self.subscribers.push(SubscriberEntry {
+            key_id,
+            locality,
+            topic,
+            dispatch: sub,
+        });
         Ok(key_id)
     }
 
@@ -368,33 +392,72 @@ impl<T: Read + Write> Node<T> {
 
         for i in 0..self.publishers.len() {
             let drain = self.publishers[i];
-            // try_drain_into is non-blocking; loop until the queue is empty
-            while let Some((n, seq, ts)) = drain.try_drain_into(&mut cdr_scratch) {
-                let ke = drain
-                    .topic_ke()
-                    .to_key_expr()
-                    .map_err(|_| Error::InvalidArgument)?;
+            let pub_locality = drain.locality();
 
-                let mut pos = codec::encode_frame_header(&mut frame_buf, self.sn, true)
-                    .map_err(Error::Transport)?;
-                self.sn = self.sn.wrapping_add(1);
-
-                pos += codec::encode_push_put_with_attachment(
-                    &mut frame_buf[pos..],
-                    ke.as_str(),
-                    &cdr_scratch[..n],
-                    seq,
-                    ts,
-                    &self.gid,
+            let ke = if pub_locality != Locality::SessionLocal {
+                Some(
+                    drain
+                        .topic_ke()
+                        .to_key_expr()
+                        .map_err(|_| Error::InvalidArgument)?,
                 )
-                .map_err(Error::Transport)?;
+            } else {
+                None
+            };
 
-                frame::write_frame(&mut self.transport, &frame_buf[..pos])
-                    .await
+            while let Some((n, seq, ts)) = drain.try_drain_into(&mut cdr_scratch) {
+                // ── Local dispatch ────────────────────────────────────────────
+                if pub_locality != Locality::Remote {
+                    Self::dispatch_local(&self.subscribers, drain.topic_ke(), &cdr_scratch[..n]);
+                }
+
+                // ── Network dispatch ──────────────────────────────────────────
+                if let Some(ref ke) = ke {
+                    let mut pos = codec::encode_frame_header(&mut frame_buf, self.sn, true)
+                        .map_err(Error::Transport)?;
+                    self.sn = self.sn.wrapping_add(1);
+
+                    pos += codec::encode_push_put_with_attachment(
+                        &mut frame_buf[pos..],
+                        ke.as_str(),
+                        &cdr_scratch[..n],
+                        seq,
+                        ts,
+                        &self.gid,
+                    )
                     .map_err(Error::Transport)?;
+
+                    frame::write_frame(&mut self.transport, &frame_buf[..pos])
+                        .await
+                        .map_err(Error::Transport)?;
+                }
             }
         }
         Ok(())
+    }
+
+    fn dispatch_local(
+        subscribers: &[SubscriberEntry],
+        pub_topic: &TopicKeyExpr,
+        payload: &[u8],
+    ) {
+        for entry in subscribers {
+            if entry.locality == Locality::Remote {
+                continue;
+            }
+            if Self::topics_match(&entry.topic, pub_topic) {
+                entry.dispatch.push_raw(payload);
+            }
+        }
+    }
+
+    fn topics_match(a: &TopicKeyExpr, b: &TopicKeyExpr) -> bool {
+        if a.domain_id != b.domain_id {
+            return false;
+        }
+        let a_name = a.topic_name.trim_start_matches('/');
+        let b_name = b.topic_name.trim_start_matches('/');
+        a_name == b_name
     }
 
     async fn send_keepalive(&mut self) -> Result<(), Error> {
@@ -420,9 +483,12 @@ impl<T: Read + Write> Node<T> {
                 if let Ok((_, _, body_pos)) = decode_frame_header(frame_buf) {
                     if let Ok(Some((put, _))) = decode_push_put(&frame_buf[body_pos..]) {
                         let scope_id = put.scope as u16;
-                        for (key_id, dispatch) in &self.subscribers {
-                            if scope_id == *key_id {
-                                dispatch.push_raw(put.payload);
+                        for entry in &self.subscribers {
+                            if entry.key_id == 0 || entry.locality == Locality::SessionLocal {
+                                continue;
+                            }
+                            if scope_id == entry.key_id {
+                                entry.dispatch.push_raw(put.payload);
                                 break;
                             }
                         }

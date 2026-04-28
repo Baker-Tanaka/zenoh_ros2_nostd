@@ -163,7 +163,7 @@ async fn run<T: embedded_io_async::Read + embedded_io_async::Write>(transport: T
     };
 
     // Register publisher
-    match node.register_static_publisher(&CHATTER_PUB).await {
+    match node.create_publisher(&CHATTER_PUB).await {
         Ok(handle) => {
             callbacks.pub_handle = Some(handle);
             println!("[chatter-class] publisher registered for /chatter");
@@ -175,10 +175,7 @@ async fn run<T: embedded_io_async::Read + embedded_io_async::Write>(transport: T
     }
 
     // Register subscription
-    match node
-        .subscribe_with_dispatch(CHATTER_TOPIC, &CHATTER_SUB)
-        .await
-    {
+    match node.create_subscription(CHATTER_TOPIC, &CHATTER_SUB).await {
         Ok(_sub_handle) => {
             println!("[chatter-class] subscribed to /chatter");
         }

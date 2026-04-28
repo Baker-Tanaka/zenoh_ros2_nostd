@@ -224,19 +224,19 @@ async fn zenoh_task(stack: Stack<'static>) {
             }
         };
 
-        if let Err(e) = node.register_static_publisher(&STATUS_PUB).await {
+        if let Err(e) = node.create_publisher(&STATUS_PUB).await {
             error!("[zenoh] publisher reg failed: {}", e);
             reconnect.wait_and_advance().await;
             continue;
         }
 
-        if let Err(e) = node.register_static_publisher(&TEMP_PUB).await {
+        if let Err(e) = node.create_publisher(&TEMP_PUB).await {
             error!("[zenoh] publisher reg failed: {}", e);
             reconnect.wait_and_advance().await;
             continue;
         }
 
-        if let Err(e) = node.register_static_publisher(&ADC_RAW_PUB).await {
+        if let Err(e) = node.create_publisher(&ADC_RAW_PUB).await {
             error!("[zenoh] publisher reg failed: {}", e);
             reconnect.wait_and_advance().await;
             continue;
@@ -244,10 +244,7 @@ async fn zenoh_task(stack: Stack<'static>) {
 
         STATUS_SUB.clear();
 
-        if let Err(e) = node
-            .subscribe_with_dispatch(STATUS_TOPIC, &STATUS_SUB)
-            .await
-        {
+        if let Err(e) = node.create_subscription(STATUS_TOPIC, &STATUS_SUB).await {
             error!("[zenoh] subscribe failed: {}", e);
             reconnect.wait_and_advance().await;
             continue;
@@ -256,7 +253,7 @@ async fn zenoh_task(stack: Stack<'static>) {
         ROSOUT_SUB.clear();
 
         if let Err(e) = node
-            .subscribe_with_dispatch(ROSOUT_TOPIC, &ROSOUT_SUB)
+            .create_subscription(ROSOUT_TOPIC, &ROSOUT_SUB)
             .await
         {
             error!("[zenoh] rosout subscribe failed: {}", e);

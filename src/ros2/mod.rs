@@ -3,12 +3,15 @@
 pub mod config;
 pub mod keyexpr;
 pub mod liveliness;
+pub mod locality;
 pub mod message_trait;
 pub mod msg;
 pub mod node;
 pub mod publisher;
 pub mod qos;
 pub mod subscription;
+
+pub use locality::Locality;
 
 pub use crate::session::ReconnectPolicy;
 pub use config::ZenohRos2Config;

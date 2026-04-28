@@ -26,6 +26,7 @@ use crate::ros2::publisher::Publisher;
 /// - `M`: message type (must implement `serde::Serialize`)
 /// - `CDR_CAP`: maximum CDR-encoded message size in bytes (including 4-byte header)
 /// - `QUEUE`: number of messages buffered before `publish` blocks
+#[must_use = "drop した場合でも Publisher は動作しますが、publish() を呼べる唯一の手段が失われます。変数に束縛してください。"]
 pub struct PublisherHandle<
     M: Serialize + 'static,
     const CDR_CAP: usize = 512,

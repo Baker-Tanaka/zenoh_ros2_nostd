@@ -27,6 +27,7 @@ use crate::ros2::subscription::Subscription;
 /// - `M`: message type (must implement `serde::Deserialize`)
 /// - `MSG_SIZE`: maximum raw CDR payload size per message
 /// - `QUEUE`: number of received messages buffered
+#[must_use = "drop した場合でも Subscription はキューを保持しますが、recv() を呼べる唯一の手段が失われます。変数に束縛してください。"]
 pub struct SubscriptionHandle<
     M: for<'de> Deserialize<'de> + 'static,
     const MSG_SIZE: usize = 512,

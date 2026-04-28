@@ -25,6 +25,7 @@ use embassy_sync::mutex::Mutex;
 use serde::Serialize;
 
 use super::keyexpr::TopicKeyExpr;
+use super::locality::Locality;
 use crate::cdr;
 use crate::error::Error;
 
@@ -66,6 +67,14 @@ pub trait PublisherDrain: Sync {
     /// Topic key expression for this publisher.
     fn topic_ke(&self) -> &TopicKeyExpr;
 
+    /// Locality of this publisher.
+    ///
+    /// Defaults to [`Locality::Any`] for backward compatibility with external
+    /// implementations that do not override this method.
+    fn locality(&self) -> Locality {
+        Locality::Any
+    }
+
     /// Try to drain one CDR payload into `out_buf`.
     ///
     /// Returns `Some((bytes_written, seq_num, timestamp_ns))` if a pending
@@ -100,6 +109,7 @@ pub trait PublisherDrain: Sync {
 /// ```
 pub struct Publisher<M, const CDR_CAP: usize, const QUEUE: usize> {
     topic: TopicKeyExpr,
+    locality: Locality,
     channel: Channel<CriticalSectionRawMutex, CdrPayload<CDR_CAP>, QUEUE>,
     /// Single retry slot for messages that failed to send (persists across reconnects).
     retry_slot: BlockingMutex<CriticalSectionRawMutex, core::cell::RefCell<Option<RetryPayload>>>,
@@ -113,6 +123,26 @@ impl<M: Serialize, const CDR_CAP: usize, const QUEUE: usize> Publisher<M, CDR_CA
     pub const fn new(topic: TopicKeyExpr) -> Self {
         Self {
             topic,
+            locality: Locality::Any,
+            channel: Channel::new(),
+            retry_slot: BlockingMutex::new(core::cell::RefCell::new(None)),
+            seq_num: Mutex::new(0),
+            _phantom: core::marker::PhantomData,
+        }
+    }
+
+    /// Create a publisher with explicit locality control.
+    ///
+    /// Safe to call as a `static` initializer.
+    ///
+    /// ```rust,ignore
+    /// static LOCAL_PUB: Publisher<SensorMsg, 64, 2> =
+    ///     Publisher::with_locality(SENSOR_TOPIC, Locality::SessionLocal);
+    /// ```
+    pub const fn with_locality(topic: TopicKeyExpr, locality: Locality) -> Self {
+        Self {
+            topic,
+            locality,
             channel: Channel::new(),
             retry_slot: BlockingMutex::new(core::cell::RefCell::new(None)),
             seq_num: Mutex::new(0),
@@ -199,6 +229,10 @@ impl<M: Serialize, const CDR_CAP: usize, const QUEUE: usize> PublisherDrain
 {
     fn topic_ke(&self) -> &TopicKeyExpr {
         &self.topic
+    }
+
+    fn locality(&self) -> Locality {
+        self.locality
     }
 
     fn try_drain_into(&self, out_buf: &mut [u8]) -> Option<(usize, i64, i64)> {

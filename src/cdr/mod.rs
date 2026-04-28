@@ -43,6 +43,43 @@ pub const fn cdr_cap_for_string(max_str_len: usize) -> usize {
     + 1 // null terminator
 }
 
+/// Compute the CDR buffer capacity for common message shapes at compile time.
+///
+/// This macro eliminates the need to hand-calculate buffer sizes for Publisher /
+/// Subscription const generics.
+///
+/// # Supported forms
+///
+/// | Form | Formula | Example |
+/// |------|---------|---------|
+/// | `String(N)` | `4 + 4 + N + 1` | `cdr_size_of!(String(128))` = 137 |
+/// | `bytes(N)` | `4 + N` | `cdr_size_of!(bytes(48))` = 52 |
+/// | `f64 * N` | `4 + 8*N` | `cdr_size_of!(f64 * 6)` = 52 |
+/// | `f32 * N` | `4 + 4*N` | `cdr_size_of!(f32 * 3)` = 16 |
+///
+/// # Example
+/// ```rust,ignore
+/// use zenoh_ros2_nostd::cdr_size_of;
+///
+/// static CHATTER_PUB: Publisher<StringMsg, { cdr_size_of!(String(128)) }, 4> =
+///     Publisher::new(CHATTER_TOPIC);
+/// ```
+#[macro_export]
+macro_rules! cdr_size_of {
+    (String($n:expr)) => {
+        $crate::cdr::cdr_cap_for_string($n)
+    };
+    (bytes($n:expr)) => {
+        4usize + $n
+    };
+    (f64 * $n:expr) => {
+        4usize + 8 * $n
+    };
+    (f32 * $n:expr) => {
+        4usize + 4 * $n
+    };
+}
+
 /// Serialize a value to CDR LE into the provided buffer.
 ///
 /// Returns the number of bytes written.

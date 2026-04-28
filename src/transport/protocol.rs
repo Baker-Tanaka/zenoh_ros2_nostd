@@ -46,6 +46,19 @@ impl ZenohId {
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes[..self.len as usize]
     }
+
+    /// Generate a deterministic ZenohId from a name string (e.g., a node name).
+    ///
+    /// XOR-folds the UTF-8 bytes of `name` into 8 bytes.  Same name always
+    /// produces the same ID; different names almost always differ.  For
+    /// production use, prefer a hardware-unique ID derived from a MAC address.
+    pub fn from_name(name: &str) -> Self {
+        let mut bytes = [0u8; 8];
+        for (i, b) in name.bytes().enumerate() {
+            bytes[i % 8] ^= b;
+        }
+        Self::from_bytes(&bytes)
+    }
 }
 
 impl core::fmt::Debug for ZenohId {
@@ -61,6 +74,38 @@ impl core::fmt::Debug for ZenohId {
 impl defmt::Format for ZenohId {
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "{=[u8]:x}", self.as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_name_deterministic() {
+        let a = ZenohId::from_name("talker");
+        let b = ZenohId::from_name("talker");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn from_name_different_names_differ() {
+        let a = ZenohId::from_name("talker");
+        let b = ZenohId::from_name("listener");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn from_name_empty() {
+        let id = ZenohId::from_name("");
+        assert_eq!(id.len, 8);
+        assert_eq!(&id.bytes[..8], &[0u8; 8]);
+    }
+
+    #[test]
+    fn from_name_len_is_8() {
+        let id = ZenohId::from_name("talker");
+        assert_eq!(id.len, 8);
     }
 }
 

@@ -23,11 +23,16 @@ pub use crate::error::Error;
 
 // ROS2 types needed by users
 pub use crate::ros2::keyexpr::{ActionKeyExprs, TopicKeyExpr};
+pub use crate::ros2::locality::Locality;
 pub use crate::ros2::message_trait::RosMessage;
 pub use crate::ros2::msg;
 pub use crate::ros2::publisher::Publisher;
 pub use crate::ros2::qos::{Durability, History, Qos, Reliability};
 pub use crate::ros2::subscription::Subscription;
+
+// CDR buffer capacity helpers
+pub use crate::cdr::cdr_cap_for_string;
+pub use crate::cdr_size_of;
 pub use crate::session::reconnect::ReconnectPolicy;
 pub use crate::transport::protocol::ZenohId;
 
