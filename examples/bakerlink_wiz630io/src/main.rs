@@ -252,10 +252,7 @@ async fn zenoh_task(stack: Stack<'static>) {
 
         ROSOUT_SUB.clear();
 
-        if let Err(e) = node
-            .create_subscription(ROSOUT_TOPIC, &ROSOUT_SUB)
-            .await
-        {
+        if let Err(e) = node.create_subscription(ROSOUT_TOPIC, &ROSOUT_SUB).await {
             error!("[zenoh] rosout subscribe failed: {}", e);
             reconnect.wait_and_advance().await;
             continue;
@@ -276,7 +273,7 @@ async fn app_task(adc_peri: Peri<'static, ADC>, temp_sensor_peri: Peri<'static, 
         let mut data: String<128> = String::new();
         let _ = core::fmt::write(
             &mut data,
-            core::format_args!("Baker link.dev heartbeat count={}", counter),
+            core::format_args!("Baker link. Dev heartbeat count={}", counter),
         );
         counter += 1;
 
