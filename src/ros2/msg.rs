@@ -443,6 +443,156 @@ pub mod action_msgs {
         }
     }
 }
+/// `sensor_msgs` package — Range and Imu message types.
+pub mod sensor_msgs {
+    use super::TopicKeyExpr;
+    use heapless::String;
+    use serde::{Deserialize, Serialize};
+
+    /// `builtin_interfaces/msg/Time` — seconds + nanoseconds.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct Stamp {
+        pub sec: i32,
+        pub nanosec: u32,
+    }
+
+    impl Stamp {
+        pub const ZERO: Self = Self { sec: 0, nanosec: 0 };
+    }
+
+    /// `std_msgs/msg/Header` with fixed-capacity `frame_id`.
+    ///
+    /// `N` is the maximum byte capacity of the frame_id string (default 16).
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct Header<const N: usize = 16> {
+        pub stamp: Stamp,
+        pub frame_id: String<N>,
+    }
+
+    impl<const N: usize> Header<N> {
+        pub fn zero() -> Self {
+            Self { stamp: Stamp::ZERO, frame_id: String::new() }
+        }
+    }
+
+    // ── sensor_msgs/msg/Range ────────────────────────────────────────────────
+
+    /// `radiation_type` constant: ultrasonic.
+    pub const RANGE_ULTRASOUND: u8 = 0;
+    /// `radiation_type` constant: infrared.
+    pub const RANGE_INFRARED: u8 = 1;
+
+    /// Type metadata for `sensor_msgs/msg/Range`.
+    pub struct RangeType;
+
+    impl RangeType {
+        /// DDS type name (rmw_zenoh_cpp convention).
+        pub const TYPE_NAME: &'static str = "sensor_msgs::msg::dds_::Range_";
+
+        /// RIHS01 type hash for `sensor_msgs/msg/Range`.
+        ///
+        /// **TODO: verify** — run `ros2 interface hash sensor_msgs/msg/Range`
+        /// on the target ROS2 system and replace this placeholder.
+        pub const TYPE_HASH: &'static str =
+            "RIHS01_run_ros2_interface_hash_sensor_msgs_msg_Range_and_replace_this";
+
+        /// Build a [`TopicKeyExpr`] for any topic using this message type.
+        pub const fn topic(domain_id: u32, topic_name: &'static str) -> TopicKeyExpr {
+            TopicKeyExpr::new(domain_id, topic_name, Self::TYPE_NAME, Self::TYPE_HASH)
+        }
+    }
+
+    /// CDR-serializable `sensor_msgs/Range` message.
+    ///
+    /// CDR size with empty `frame_id`: 4 header + 32 body = 36 bytes.
+    /// Use [`RANGE_CDR_CAP`] (48) as the publisher buffer — fits frame_ids up to ~9 chars.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RangeMsg<const N: usize = 16> {
+        pub header: Header<N>,
+        /// Use [`RANGE_ULTRASOUND`] or [`RANGE_INFRARED`].
+        pub radiation_type: u8,
+        /// Beam opening angle [radians]. HC-SR04 ≈ 0.2618 rad (15°).
+        pub field_of_view: f32,
+        pub min_range: f32,
+        pub max_range: f32,
+        /// Measured distance [meters]. Use `f32::INFINITY` when out of range.
+        pub range: f32,
+    }
+
+    /// CDR buffer capacity for [`RangeMsg`] with frame_ids up to ~9 characters.
+    pub const RANGE_CDR_CAP: usize = 48;
+
+    // ── sensor_msgs/msg/Imu ──────────────────────────────────────────────────
+
+    /// Type metadata for `sensor_msgs/msg/Imu`.
+    pub struct ImuType;
+
+    impl ImuType {
+        /// DDS type name (rmw_zenoh_cpp convention).
+        pub const TYPE_NAME: &'static str = "sensor_msgs::msg::dds_::Imu_";
+
+        /// RIHS01 type hash for `sensor_msgs/msg/Imu`.
+        ///
+        /// **TODO: verify** — run `ros2 interface hash sensor_msgs/msg/Imu`
+        /// on the target ROS2 system and replace this placeholder.
+        pub const TYPE_HASH: &'static str =
+            "RIHS01_run_ros2_interface_hash_sensor_msgs_msg_Imu_and_replace_this";
+
+        /// Build a [`TopicKeyExpr`] for any topic using this message type.
+        pub const fn topic(domain_id: u32, topic_name: &'static str) -> TopicKeyExpr {
+            TopicKeyExpr::new(domain_id, topic_name, Self::TYPE_NAME, Self::TYPE_HASH)
+        }
+    }
+
+    /// `geometry_msgs/Quaternion` (f64 components).
+    #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+    pub struct Quaternion {
+        pub x: f64,
+        pub y: f64,
+        pub z: f64,
+        pub w: f64,
+    }
+
+    impl Quaternion {
+        /// Identity quaternion (no rotation).
+        pub const IDENTITY: Self = Self { x: 0.0, y: 0.0, z: 0.0, w: 1.0 };
+    }
+
+    /// `geometry_msgs/Vector3` with f64 components (for Imu angular/linear fields).
+    #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+    pub struct Vector3d {
+        pub x: f64,
+        pub y: f64,
+        pub z: f64,
+    }
+
+    impl Vector3d {
+        pub const ZERO: Self = Self { x: 0.0, y: 0.0, z: 0.0 };
+    }
+
+    /// CDR-serializable `sensor_msgs/Imu` message.
+    ///
+    /// CDR size with empty `frame_id`: 4 header + 312 body = 316 bytes.
+    /// Use [`IMU_CDR_CAP`] (320) as the publisher buffer.
+    ///
+    /// For a 6-axis IMU (no magnetometer), set `orientation_covariance[0] = -1.0`
+    /// to indicate that orientation is unknown per REP-145.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ImuMsg<const N: usize = 16> {
+        pub header: Header<N>,
+        pub orientation: Quaternion,
+        /// Row-major 3×3 covariance. Set `[0] = -1.0` if orientation is unknown.
+        pub orientation_covariance: [f64; 9],
+        pub angular_velocity: Vector3d,
+        pub angular_velocity_covariance: [f64; 9],
+        pub linear_acceleration: Vector3d,
+        pub linear_acceleration_covariance: [f64; 9],
+    }
+
+    /// CDR buffer capacity for [`ImuMsg`] with empty frame_id (316 bytes + 4 margin).
+    pub const IMU_CDR_CAP: usize = 320;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
