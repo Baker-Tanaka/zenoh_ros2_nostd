@@ -489,12 +489,9 @@ pub mod sensor_msgs {
         /// DDS type name (rmw_zenoh_cpp convention).
         pub const TYPE_NAME: &'static str = "sensor_msgs::msg::dds_::Range_";
 
-        /// RIHS01 type hash for `sensor_msgs/msg/Range`.
-        ///
-        /// **TODO: verify** — run `ros2 interface hash sensor_msgs/msg/Range`
-        /// on the target ROS2 system and replace this placeholder.
+        /// RIHS01 type hash for `sensor_msgs/msg/Range`. **VERIFIED** (ROS2 Jazzy).
         pub const TYPE_HASH: &'static str =
-            "RIHS01_run_ros2_interface_hash_sensor_msgs_msg_Range_and_replace_this";
+            "RIHS01_b42b62562e93cbfe9d42b82fe5994dfa3d63d7d5c90a317981703f7388adff3a";
 
         /// Build a [`TopicKeyExpr`] for any topic using this message type.
         pub const fn topic(domain_id: u32, topic_name: &'static str) -> TopicKeyExpr {
@@ -504,8 +501,8 @@ pub mod sensor_msgs {
 
     /// CDR-serializable `sensor_msgs/Range` message.
     ///
-    /// CDR size with empty `frame_id`: 4 header + 32 body = 36 bytes.
-    /// Use [`RANGE_CDR_CAP`] (48) as the publisher buffer — fits frame_ids up to ~9 chars.
+    /// CDR size with empty `frame_id`: 4 header + 40 body = 44 bytes (ROS2 Iron/Jazzy includes `variance`).
+    /// Use [`RANGE_CDR_CAP`] (52) as the publisher buffer — fits frame_ids up to ~5 chars.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct RangeMsg<const N: usize = 16> {
         pub header: Header<N>,
@@ -517,10 +514,12 @@ pub mod sensor_msgs {
         pub max_range: f32,
         /// Measured distance [meters]. Use `f32::INFINITY` when out of range.
         pub range: f32,
+        /// Measurement variance [m^2]. 0.0 = unknown (added in ROS2 Iron).
+        pub variance: f32,
     }
 
-    /// CDR buffer capacity for [`RangeMsg`] with frame_ids up to ~9 characters.
-    pub const RANGE_CDR_CAP: usize = 48;
+    /// CDR buffer capacity for [`RangeMsg`] with frame_ids up to ~5 characters.
+    pub const RANGE_CDR_CAP: usize = 52;
 
     // ── sensor_msgs/msg/Imu ──────────────────────────────────────────────────
 
@@ -531,12 +530,9 @@ pub mod sensor_msgs {
         /// DDS type name (rmw_zenoh_cpp convention).
         pub const TYPE_NAME: &'static str = "sensor_msgs::msg::dds_::Imu_";
 
-        /// RIHS01 type hash for `sensor_msgs/msg/Imu`.
-        ///
-        /// **TODO: verify** — run `ros2 interface hash sensor_msgs/msg/Imu`
-        /// on the target ROS2 system and replace this placeholder.
+        /// RIHS01 type hash for `sensor_msgs/msg/Imu`. **VERIFIED** (ROS2 Jazzy).
         pub const TYPE_HASH: &'static str =
-            "RIHS01_run_ros2_interface_hash_sensor_msgs_msg_Imu_and_replace_this";
+            "RIHS01_7d9a00ff131080897a5ec7e26e315954b8eae3353c3f995c55faf71574000b5b";
 
         /// Build a [`TopicKeyExpr`] for any topic using this message type.
         pub const fn topic(domain_id: u32, topic_name: &'static str) -> TopicKeyExpr {
