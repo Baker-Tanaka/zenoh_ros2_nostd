@@ -56,7 +56,7 @@
             "preLaunchTask": "bakerlink-wiz630io: build (debug)",
             "type": "probe-rs-debug",
             "request": "launch",
-            "name": "Baker link.dev + WIZ630io demo",
+            "name": "Baker link. Dev + WIZ630io demo",
             "server": "host.docker.internal:50001",
             "speed": 4000,
             "chip": "RP2040",

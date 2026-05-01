@@ -125,7 +125,7 @@ static TWIST_PUB: zenoh_ros2_nostd::ros2::Publisher<Twist, 256, 4> =
 
 | Example                                              | ターゲット                         | 状態         | 説明                                                                         |
 | ---------------------------------------------------- | ---------------------------------- | ------------ | ---------------------------------------------------------------------------- |
-| [`bakerlink_wiz630io`](examples/bakerlink_wiz630io/) | RP2040 + WIZ630io (W5500) Ethernet | ✅ アクティブ | Baker link.dev + WIZ630io で Docker 上の ROS2 と pub/sub                     |
+| [`bakerlink_wiz630io`](examples/bakerlink_wiz630io/) | RP2040 + WIZ630io (W5500) Ethernet | ✅ アクティブ | Baker link. Dev + WIZ630io で Docker 上の ROS2 と pub/sub                    |
 | [`wasi_turtlebot3`](examples/wasi_turtlebot3/)       | wasm32-wasip1                      | ✅ アクティブ | wasmtime で Gazebo turtlebot3 と cmd_vel 通信 ([ガイド](docs/wasi-guide.md)) |
 | [`wasi_chatter_class`](examples/wasi_chatter_class/) | wasm32-wasip1                      | ✅ アクティブ | NodeCallbacks トレイト方式のクラスベース pub/sub デモ                        |
 | [`esp32c3_wifi`](examples/esp32c3_wifi/)             | ESP32-C3 WiFi                      | 🗄️ アーカイブ | ESP32-C3 WiFi 接続デモ（現在未動作）                                         |
@@ -317,8 +317,8 @@ cargo test --no-default-features --test integration_test -- --ignored --test-thr
 - [x] Frame 受信ループ (Frame → Push/Put → Subscriber dispatch)
 - [x] Declare Subscriber → Router 登録
 - [x] DeclareKeyExpr → ローカル ID 割り当て
-- [x] Baker link.dev + WIZ630io Embassy example (RP2040 + W5500 Ethernet)
-- [x] Baker link.dev + WIZ630io example を新 SDK API に移行
+- [x] Baker link. Dev + WIZ630io Embassy example (RP2040 + W5500 Ethernet)
+- [x] Baker link. Dev + WIZ630io example を新 SDK API に移行
 - [x] `rmw_zenoh_cpp` ROS2 ノードとの双方向 pub/sub 通信テスト (cross-session subscribe + rmw attachment)
 
 ### v0.3 — SDK Redesign (rclpy-like API) 🔄

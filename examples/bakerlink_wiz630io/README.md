@@ -1,6 +1,6 @@
-# Baker link.dev + WIZ630io — ROS2 pub/sub over Ethernet
+# Baker link. Dev + WIZ630io — ROS2 pub/sub over Ethernet
 
-[Baker link.dev](https://github.com/Baker-link-Lab) (RP2040) と [WIZ630io](https://www.wiznet.io/) (W5500) を SPI 接続し、Docker 上の ROS2 (`rmw_zenoh_cpp`) と `/chatter` トピックを pub/sub するサンプルです。
+[Baker link. Dev](https://github.com/Baker-link-Lab) (RP2040) と [WIZ630io](https://www.wiznet.io/) (W5500) を SPI 接続し、Docker 上の ROS2 (`rmw_zenoh_cpp`) と `/chatter` トピックを pub/sub するサンプルです。
 
 ## クイックスタート
 
@@ -23,9 +23,9 @@ cargo run --release
 **verify_sub.py:**
 ```
 [PY-SUB] Subscribed to /chatter — waiting for messages…
-[  1] /chatter: "Hello from Baker link.dev! count=0"
-[  2] /chatter: "Hello from Baker link.dev! count=1"
-[  3] /chatter: "Hello from Baker link.dev! count=2"
+[  1] /chatter: "Hello from Baker link. Dev! count=0"
+[  2] /chatter: "Hello from Baker link. Dev! count=1"
+[  3] /chatter: "Hello from Baker link. Dev! count=2"
 ```
 
 **probe-rs RTT（ホスト側）:**
@@ -39,7 +39,7 @@ cargo run --release
 ## ネットワーク構成
 
 ```text
-Baker link.dev + WIZ630io ──Ethernet──► ホスト PC (:7447 port forward)
+Baker link. Dev + WIZ630io ──Ethernet──► ホスト PC (:7447 port forward)
                                             │
                                        Docker network
                                             │
@@ -55,10 +55,10 @@ Baker link.dev + WIZ630io ──Ethernet──► ホスト PC (:7447 port forwa
 
 ## 配線図
 
-### Baker link.dev (RP2040) ↔ WIZ630io (W5500) SPI 接続
+### Baker link. Dev (RP2040) ↔ WIZ630io (W5500) SPI 接続
 
 ```text
-  Baker link.dev (RP2040)              WIZ630io (W5500)
+  Baker link. Dev (RP2040)              WIZ630io (W5500)
  ┌─────────────────────┐             ┌──────────────────┐
  │                     │             │                  │
  │   GP16 (SPI0 MISO) ─┼─────────────┼─ MISO            │
@@ -94,7 +94,7 @@ Baker link.dev + WIZ630io ──Ethernet──► ホスト PC (:7447 port forwa
 
 ### 注意事項
 
-- **電源**: WIZ630io は 3.3V 動作。Baker link.dev の 3V3 出力ピンから給電
+- **電源**: WIZ630io は 3.3V 動作。Baker link. Dev の 3V3 出力ピンから給電
 - **SPI クロック**: 10 MHz（安全なデフォルト値。W5500 は最大 80 MHz 対応）
 - **プルアップ**: INTn は内部プルアップ有効化済み（ファームウェア設定）
 - **MAC アドレス**: `src/main.rs` 内の `mac_addr` をボードごとにユニークな値に変更すること
@@ -126,7 +126,7 @@ cd examples/bakerlink_wiz630io
 
 ### 3. ファームウェア書き込み
 
-Baker link.dev を USB で接続し、もう一台の Baker link.dev（デバッガ側）経由で書き込みます:
+Baker link. Dev を USB で接続し、もう一台の Baker link. Dev（デバッガ側）経由で書き込みます:
 
 ```sh
 cargo run --release
@@ -144,7 +144,7 @@ ros2 topic echo /chatter std_msgs/msg/String
 
 ## ハードウェア仕様
 
-### Baker link.dev
+### Baker link. Dev
 
 - **MCU**: RP2040 (Cortex-M0+, 133 MHz dual-core)
 - **Flash**: 2 MB (外部 QSPI)
