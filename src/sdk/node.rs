@@ -54,7 +54,7 @@ const RX_BUF_SIZE: usize = 4096;
 const MIN_LEASE_MS: u64 = 2_000;
 
 /// Maximum publishers per node.
-const MAX_PUBS: usize = 4;
+const MAX_PUBS: usize = 8;
 
 /// Maximum subscriptions per node.
 const MAX_SUBS: usize = 4;
